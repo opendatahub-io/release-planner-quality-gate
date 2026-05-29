@@ -20,6 +20,8 @@ from scripts.jira_utils import (
     get_issue,
     add_labels,
     remove_labels,
+    add_comment,
+    markdown_to_adf,
 )
 from scripts.rice_invoker import (
     generate_rice_scores,
@@ -114,6 +116,87 @@ def apply_verdict_label(server, user, token, issue_key, current_labels,
         add_labels(server, user, token, issue_key, labels_to_add)
     if labels_to_remove:
         remove_labels(server, user, token, issue_key, labels_to_remove)
+
+
+CHECK_LABELS = {
+    "has_rice": "RICE Score",
+    "has_priority": "Priority",
+    "has_sign_off": "Human Sign-off",
+    "has_components": "Components",
+    "has_release_type": "Release Type",
+    "has_docs_required": "Product Docs Required",
+    "has_fix_version": "Fix Version",
+}
+
+
+def _extract_field_detail(issue, check_name):
+    """Extract a human-readable value for a check from the issue fields."""
+    f = issue.get("fields", {})
+    if check_name == "has_rice":
+        r = f.get("customfield_10862", "?")
+        i = f.get("customfield_10836", "?")
+        c_obj = f.get("customfield_10838")
+        c = c_obj.get("value", "?") if isinstance(c_obj, dict) else "?"
+        e = f.get("customfield_10637", "?")
+        return f"R={r}, I={i}, C={c}, E={e}"
+    if check_name == "has_priority":
+        p = f.get("priority")
+        return p.get("name", "?") if isinstance(p, dict) else str(p or "?")
+    if check_name == "has_sign_off":
+        return "strat-creator-human-sign-off label present"
+    if check_name == "has_components":
+        comps = f.get("components", [])
+        return ", ".join(c.get("name", "?") for c in comps) if comps else "?"
+    if check_name == "has_release_type":
+        rt = f.get("customfield_10851")
+        return rt.get("value", "?") if isinstance(rt, dict) else str(rt or "?")
+    if check_name == "has_docs_required":
+        dr = f.get("customfield_10665")
+        return dr.get("value", "?") if isinstance(dr, dict) else str(dr or "?")
+    if check_name == "has_fix_version":
+        fv = f.get("fixVersions", [])
+        return ", ".join(v.get("name", "?") for v in fv) if fv else "?"
+    return "?"
+
+
+def build_gate_comment(issue, check_results, verdict, label_config):
+    """Build a deterministic gate result comment in markdown."""
+    status = "PASS" if verdict == "pass" else "FAIL"
+    label = label_config["gate_pass"] if verdict == "pass" else label_config["gate_fail"]
+
+    lines = [
+        f"**Release Quality Gate 1: Feature Definition of Ready for Planning — {status}**",
+        "",
+    ]
+
+    if verdict == "pass":
+        lines.append("All hard checks passed for this feature.")
+    else:
+        failed = [r for r in check_results if not r.passed]
+        lines.append(f"{len(failed)} check(s) failed.")
+    lines.append("")
+
+    lines.append("| Check | Status | Details |")
+    lines.append("|-------|--------|---------|")
+    for r in check_results:
+        check_label = CHECK_LABELS.get(r.name, r.name)
+        status_icon = "PASS" if r.passed else "FAIL"
+        if r.passed:
+            detail = _extract_field_detail(issue, r.name)
+        else:
+            detail = r.details
+        lines.append(f"| {check_label} | {status_icon} | {detail} |")
+
+    lines.append("")
+    lines.append(f"Label applied: {label}")
+
+    return "\n".join(lines)
+
+
+def post_gate_comment(server, user, token, issue_key, comment_md):
+    """Post the gate result comment to Jira."""
+    comment_adf = markdown_to_adf(comment_md)
+    add_comment(server, user, token, issue_key, comment_adf)
 
 
 def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
@@ -262,17 +345,21 @@ def main(argv=None):
                         issues[i] = issue
                         break
 
-    # Apply verdict labels (full run only)
+    # Apply verdict labels and post gate comment (full run only)
     if not args.dry_run:
         label_config = config["labels"]
         for issue in issues:
             key = issue["key"]
-            verdict = compute_verdict(results_by_issue[key])
+            results = results_by_issue[key]
+            verdict = compute_verdict(results)
             current_labels = issue.get("fields", {}).get("labels", [])
             apply_verdict_label(
                 server, user, token, key, current_labels,
                 verdict, label_config)
-            print(f"  {key}: {verdict.upper()} → label applied")
+            comment_md = build_gate_comment(
+                issue, results, verdict, label_config)
+            post_gate_comment(server, user, token, key, comment_md)
+            print(f"  {key}: {verdict.upper()} → label + comment applied")
     else:
         for key, results in results_by_issue.items():
             verdict = compute_verdict(results)
