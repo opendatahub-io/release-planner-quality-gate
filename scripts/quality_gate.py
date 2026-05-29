@@ -196,10 +196,15 @@ def build_gate_comment(issue, check_results, verdict, label_config):
         lines.append(f"{len(failed)} check(s) failed.")
     lines.append("")
 
+    issue_labels = issue.get("fields", {}).get("labels", [])
+    has_auto_rice = "rp-qg1-auto-rice" in issue_labels
+
     lines.append("| Check | Status | Details |")
     lines.append("|-------|--------|---------|")
     for r in check_results:
         check_label = CHECK_LABELS.get(r.name, r.name)
+        if r.name == "has_rice" and has_auto_rice:
+            check_label = "RICE Score (Auto-generated)"
         status_icon = "PASS" if r.passed else "FAIL"
         if r.passed:
             detail = _extract_field_detail(issue, r.name)
