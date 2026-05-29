@@ -147,7 +147,9 @@ def generate_rice_scores(issue_keys: list[str],
 def write_rice_to_jira(rec: RiceRecommendation, server: str, user: str,
                        token: str):
     """Write RICE fields + justification comment to Jira."""
-    from scripts.jira_utils import api_call_with_retry, add_labels, add_comment
+    from scripts.jira_utils import (
+        api_call_with_retry, add_labels, add_comment, markdown_to_adf,
+    )
 
     # Set the 4 RICE fields
     confidence_option = CONFIDENCE_OPTIONS.get(rec.confidence)
@@ -165,8 +167,8 @@ def write_rice_to_jira(rec: RiceRecommendation, server: str, user: str,
     api_call_with_retry(server, f"/issue/{rec.ticket}", user, token,
                         body=body, method="PUT")
 
-    # Post justification comment
-    comment_text = (
+    # Post justification comment (ADF format required by Jira API v3)
+    comment_md = (
         f"**RICE SCORE JUSTIFICATION (auto-generated):**\n\n"
         f"| Dimension | Score | Scale |\n"
         f"|-----------|-------|-------|\n"
@@ -174,10 +176,11 @@ def write_rice_to_jira(rec: RiceRecommendation, server: str, user: str,
         f"| Impact | {rec.impact} | 1-3-5-8-13 |\n"
         f"| Confidence | {rec.confidence}% | 50-75-100 |\n"
         f"| Effort | {rec.effort} | 1-2-3-5-8-13 |\n"
-        f"| **RICE Score** | **{rec.expected_rice}** | (R×I×C)/E |\n\n"
+        f"| **RICE Score** | **{rec.expected_rice}** | (RxIxC)/E |\n\n"
         f"{rec.justification}"
     )
-    add_comment(server, user, token, rec.ticket, comment_text)
+    comment_adf = markdown_to_adf(comment_md)
+    add_comment(server, user, token, rec.ticket, comment_adf)
 
     # Add auto-rice label
     add_labels(server, user, token, rec.ticket, ["rp-qg1-auto-rice"])
