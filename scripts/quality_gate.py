@@ -222,10 +222,38 @@ def build_gate_comment(issue, check_results, verdict, label_config):
     return "\n".join(lines)
 
 
+GATE_COMMENT_MARKER = "Release Quality Gate 1: Feature Definition of Ready for Planning"
+
+
+def _find_gate_comment(server, user, token, issue_key):
+    """Find an existing gate comment by looking for the marker text."""
+    from scripts.jira_utils import get_comments, adf_to_markdown
+    comments = get_comments(server, user, token, issue_key)
+    for comment in comments:
+        body = comment.get("body", {})
+        text = adf_to_markdown(body) if isinstance(body, dict) else str(body)
+        if GATE_COMMENT_MARKER in text:
+            return comment.get("id")
+    return None
+
+
+def _update_comment(server, user, token, issue_key, comment_id, body_adf):
+    """PUT to update an existing comment."""
+    from scripts.jira_utils import api_call_with_retry
+    path = f"/issue/{issue_key}/comment/{comment_id}"
+    return api_call_with_retry(server, path, user, token,
+                               body={"body": body_adf}, method="PUT")
+
+
 def post_gate_comment(server, user, token, issue_key, comment_md):
-    """Post the gate result comment to Jira."""
+    """Post or update the gate result comment on Jira."""
     comment_adf = markdown_to_adf(comment_md)
-    add_comment(server, user, token, issue_key, comment_adf)
+    existing_id = _find_gate_comment(server, user, token, issue_key)
+    if existing_id:
+        _update_comment(server, user, token, issue_key, existing_id,
+                        comment_adf)
+    else:
+        add_comment(server, user, token, issue_key, comment_adf)
 
 
 def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
