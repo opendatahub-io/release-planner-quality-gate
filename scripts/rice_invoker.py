@@ -91,7 +91,12 @@ def invoke_rice_skill(issue_key: str, timeout: int = 300) -> str:
     """Invoke the rice-score Claude skill headlessly."""
     repo_root = os.path.join(os.path.dirname(__file__), "..")
     proc = subprocess.run(
-        ["claude", "--print", "-p", f"/rice-score {issue_key}"],
+        [
+            "claude", "-p", f"/rice-score {issue_key}",
+            "--dangerously-skip-permissions",
+            "--model", "claude-opus-4-6",
+            "--verbose",
+        ],
         capture_output=True,
         text=True,
         timeout=timeout,
