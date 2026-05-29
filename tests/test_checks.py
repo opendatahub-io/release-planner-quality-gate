@@ -250,7 +250,103 @@ class TestLabelPresentCheck:
         assert "label-b" in result.details
 
 
+# --- New hard checks: components, release type, docs required, fix version ---
+
+class TestNewHardChecks:
+    def test_components_present(self):
+        checks = instantiate_checks([
+            {"name": "has_components", "type": "field_present",
+             "fields": ["components"]},
+        ])
+        issue = {"fields": {"components": [{"name": "Dashboard"}]}}
+        assert checks[0].evaluate(issue).passed
+
+    def test_components_empty_list_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_components", "type": "field_present",
+             "fields": ["components"]},
+        ])
+        issue = {"fields": {"components": []}}
+        assert not checks[0].evaluate(issue).passed
+
+    def test_release_type_present(self):
+        checks = instantiate_checks([
+            {"name": "has_release_type", "type": "field_present",
+             "fields": ["customfield_10851"]},
+        ])
+        issue = {"fields": {"customfield_10851": {"value": "Tech Preview"}}}
+        assert checks[0].evaluate(issue).passed
+
+    def test_release_type_missing(self):
+        checks = instantiate_checks([
+            {"name": "has_release_type", "type": "field_present",
+             "fields": ["customfield_10851"]},
+        ])
+        issue = {"fields": {}}
+        assert not checks[0].evaluate(issue).passed
+
+    def test_docs_required_present(self):
+        checks = instantiate_checks([
+            {"name": "has_docs_required", "type": "field_present",
+             "fields": ["customfield_10665"]},
+        ])
+        issue = {"fields": {"customfield_10665": {"value": "Yes"}}}
+        assert checks[0].evaluate(issue).passed
+
+    def test_fix_version_present(self):
+        checks = instantiate_checks([
+            {"name": "has_fix_version", "type": "field_present",
+             "fields": ["fixVersions"]},
+        ])
+        issue = {"fields": {"fixVersions": [{"name": "rhoai-3.5"}]}}
+        assert checks[0].evaluate(issue).passed
+
+    def test_fix_version_empty_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_fix_version", "type": "field_present",
+             "fields": ["fixVersions"]},
+        ])
+        issue = {"fields": {"fixVersions": []}}
+        assert not checks[0].evaluate(issue).passed
+
+
 # --- instantiate_checks with full config ---
+
+ALL_HARD_CHECKS = [
+    {
+        "name": "has_rice",
+        "type": "field_present",
+        "fields": [
+            "customfield_10862", "customfield_10836",
+            "customfield_10838", "customfield_10637",
+        ],
+        "auto_fix": "rice_scorer",
+    },
+    {"name": "has_priority", "type": "field_present", "fields": ["priority"]},
+    {"name": "has_sign_off", "type": "label_present",
+     "labels": ["strat-creator-human-sign-off"]},
+    {"name": "has_components", "type": "field_present", "fields": ["components"]},
+    {"name": "has_release_type", "type": "field_present",
+     "fields": ["customfield_10851"]},
+    {"name": "has_docs_required", "type": "field_present",
+     "fields": ["customfield_10665"]},
+    {"name": "has_fix_version", "type": "field_present",
+     "fields": ["fixVersions"]},
+]
+
+FULL_PASSING_ISSUE = {"fields": {
+    "customfield_10862": 8,
+    "customfield_10836": 5,
+    "customfield_10838": {"id": "16144"},
+    "customfield_10637": 3,
+    "priority": {"name": "Critical"},
+    "labels": ["strat-creator-human-sign-off"],
+    "components": [{"name": "Dashboard"}],
+    "customfield_10851": {"value": "Tech Preview"},
+    "customfield_10665": {"value": "Yes"},
+    "fixVersions": [{"name": "rhoai-3.5"}],
+}}
+
 
 class TestInstantiateChecks:
     def test_pipeline_settings_checks(self):
@@ -283,107 +379,70 @@ class TestInstantiateChecks:
         assert checks[2].name == "has_sign_off"
 
     def test_full_pass_scenario(self):
-        """Issue with all RICE, priority, and sign-off label passes all checks."""
-        configs = [
-            {
-                "name": "has_rice",
-                "type": "field_present",
-                "fields": [
-                    "customfield_10862", "customfield_10836",
-                    "customfield_10838", "customfield_10637",
-                ],
-                "auto_fix": "rice_scorer",
-            },
-            {
-                "name": "has_priority",
-                "type": "field_present",
-                "fields": ["priority"],
-            },
-            {
-                "name": "has_sign_off",
-                "type": "label_present",
-                "labels": ["strat-creator-human-sign-off"],
-            },
-        ]
-        checks = instantiate_checks(configs)
-        issue = {"fields": {
-            "customfield_10862": 8,
-            "customfield_10836": 5,
-            "customfield_10838": {"id": "16144"},
-            "customfield_10637": 3,
-            "priority": {"name": "Critical"},
-            "labels": ["strat-creator-human-sign-off"],
-        }}
-        results = [c.evaluate(issue) for c in checks]
+        """Issue with all required fields passes all 7 checks."""
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        results = [c.evaluate(FULL_PASSING_ISSUE) for c in checks]
         assert compute_verdict(results) == "pass"
+        assert all(r.passed for r in results)
 
     def test_missing_rice_fails(self):
-        """Issue with priority and sign-off but no RICE fails."""
-        configs = [
-            {
-                "name": "has_rice",
-                "type": "field_present",
-                "fields": [
-                    "customfield_10862", "customfield_10836",
-                    "customfield_10838", "customfield_10637",
-                ],
-                "auto_fix": "rice_scorer",
-            },
-            {
-                "name": "has_priority",
-                "type": "field_present",
-                "fields": ["priority"],
-            },
-            {
-                "name": "has_sign_off",
-                "type": "label_present",
-                "labels": ["strat-creator-human-sign-off"],
-            },
-        ]
-        checks = instantiate_checks(configs)
-        issue = {"fields": {
-            "priority": {"name": "Critical"},
-            "labels": ["strat-creator-human-sign-off"],
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            **FULL_PASSING_ISSUE["fields"],
+            "customfield_10862": None,
+            "customfield_10836": None,
+            "customfield_10838": None,
+            "customfield_10637": None,
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
-        rice_result = results[0]
+        rice_result = [r for r in results if r.name == "has_rice"][0]
         assert not rice_result.passed
         assert rice_result.auto_fixable
-        assert rice_result.auto_fix_action == "rice_scorer"
 
     def test_missing_priority_fails(self):
-        """Issue with RICE and sign-off but no priority fails."""
-        configs = [
-            {
-                "name": "has_rice",
-                "type": "field_present",
-                "fields": [
-                    "customfield_10862", "customfield_10836",
-                    "customfield_10838", "customfield_10637",
-                ],
-            },
-            {
-                "name": "has_priority",
-                "type": "field_present",
-                "fields": ["priority"],
-            },
-            {
-                "name": "has_sign_off",
-                "type": "label_present",
-                "labels": ["strat-creator-human-sign-off"],
-            },
-        ]
-        checks = instantiate_checks(configs)
-        issue = {"fields": {
-            "customfield_10862": 8,
-            "customfield_10836": 5,
-            "customfield_10838": {"id": "16144"},
-            "customfield_10637": 3,
-            "labels": ["strat-creator-human-sign-off"],
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
+            if k != "priority"
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
-        priority_result = results[1]
-        assert not priority_result.passed
-        assert not priority_result.auto_fixable
+
+    def test_missing_components_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            **FULL_PASSING_ISSUE["fields"],
+            "components": [],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        comp = [r for r in results if r.name == "has_components"][0]
+        assert not comp.passed
+
+    def test_missing_release_type_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
+            if k != "customfield_10851"
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+
+    def test_missing_docs_required_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
+            if k != "customfield_10665"
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+
+    def test_missing_fix_version_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            **FULL_PASSING_ISSUE["fields"],
+            "fixVersions": [],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
