@@ -128,6 +128,18 @@ CHECK_LABELS = {
     "has_fix_version": "Fix Version",
 }
 
+FIELD_FRIENDLY_NAMES = {
+    "customfield_10862": "Reach",
+    "customfield_10836": "Impact",
+    "customfield_10838": "Confidence",
+    "customfield_10637": "Effort",
+    "customfield_10851": "Release Type",
+    "customfield_10665": "Product Documentation Required",
+    "priority": "Priority",
+    "components": "Components",
+    "fixVersions": "Fix Version",
+}
+
 
 def _extract_field_detail(issue, check_name):
     """Extract a human-readable value for a check from the issue fields."""
@@ -159,6 +171,14 @@ def _extract_field_detail(issue, check_name):
     return "?"
 
 
+def _friendly_fail_details(details):
+    """Replace custom field IDs with human-readable names in failure details."""
+    result = details
+    for field_id, name in FIELD_FRIENDLY_NAMES.items():
+        result = result.replace(field_id, name)
+    return result
+
+
 def build_gate_comment(issue, check_results, verdict, label_config):
     """Build a deterministic gate result comment in markdown."""
     status = "PASS" if verdict == "pass" else "FAIL"
@@ -184,11 +204,20 @@ def build_gate_comment(issue, check_results, verdict, label_config):
         if r.passed:
             detail = _extract_field_detail(issue, r.name)
         else:
-            detail = r.details
+            detail = _friendly_fail_details(r.details)
         lines.append(f"| {check_label} | {status_icon} | {detail} |")
 
     lines.append("")
     lines.append(f"Label applied: {label}")
+
+    if verdict == "fail":
+        fail_label = label_config["gate_fail"]
+        lines.append("")
+        lines.append(
+            f"To resolve: fix the failing checks above in Jira, then "
+            f"remove the **{fail_label}** label. The next pipeline run "
+            f"will re-evaluate this feature automatically."
+        )
 
     return "\n".join(lines)
 
