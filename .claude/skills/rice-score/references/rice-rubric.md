@@ -1,4 +1,4 @@
-# RICE Scoring Rubric for RHAI
+# RICE Scoring Rubric
 
 **Formula**: RICE Score = (Reach x Impact x Confidence) / Effort
 
@@ -14,9 +14,9 @@ When this AI agent generates RICE scores, it is approximating what multiple huma
 
 The AI agent must compensate by reading strategy reviews (which capture engineering assessment) and linked RFEs (which capture PM/customer context) to approximate both perspectives.
 
-### RHAI-Specific: Relative Scoring, Not Person-Months
+### Relative Scoring, Not Person-Months
 
-RHAI moved away from the "person-month" method because it obscures complexity, dependencies, and unknowns. All Effort scores are relative to one another — never translate them to calendar time. At Red Hat, the Confidence field is a dropdown limited to 50%, 75%, or 100%.
+This rubric uses relative scoring instead of person-months because person-months obscure complexity, dependencies, and unknowns. All Effort scores are relative to one another — never translate them to calendar time. The Confidence field is a dropdown limited to 50%, 75%, or 100%.
 
 ---
 
@@ -96,7 +96,7 @@ Confidence is the **bias brake** in the formula. It penalizes optimism that lack
 
 ## Effort
 
-High-level relative effort estimate. RHAI uses relative scoring (not person-months) to avoid false precision around complexity, dependencies, and unknowns.
+High-level relative effort estimate using relative scoring (not person-months) to avoid false precision around complexity, dependencies, and unknowns.
 
 Effort must include **all work**: design, engineering, QA, documentation, cross-team coordination, and deployment/rollout. Not just "dev time."
 
