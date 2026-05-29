@@ -77,8 +77,8 @@ curl -s -u "$JIRA_USER:$JIRA_TOKEN" -X POST \
 ## Applicable Projects
 
 RICE scoring fields are available on:
-- **RHAISTRAT** — AI Strategy features
-- **RHOAISTRAT** — OpenShift AI Strategy features
+- **RHAISTRAT** — Red Hat AI Strategy features
+- **RHOAISTRAT** — Red Hat OpenShift AI Strategy features
 
 These are Feature-level tickets (hierarchy level 2). Outcomes (level 3) and Epics/Stories below do not have RICE fields.
 
