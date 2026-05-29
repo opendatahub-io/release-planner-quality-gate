@@ -1,0 +1,389 @@
+"""Tests for the check framework and hard check implementations."""
+import pytest
+
+from scripts.checks import (
+    CheckResult,
+    instantiate_checks,
+    compute_verdict,
+    CHECK_REGISTRY,
+)
+# Importing hard_checks registers the check types
+import scripts.checks.hard_checks  # noqa: F401
+
+
+# --- CheckResult ---
+
+class TestCheckResult:
+    def test_passing_result(self):
+        r = CheckResult(name="test", passed=True, details="ok")
+        assert r.passed
+        assert r.auto_fixable is False
+        assert r.auto_fix_action is None
+
+    def test_failing_result_with_auto_fix(self):
+        r = CheckResult(
+            name="test", passed=False, details="missing",
+            auto_fixable=True, auto_fix_action="rice_scorer",
+        )
+        assert not r.passed
+        assert r.auto_fixable
+        assert r.auto_fix_action == "rice_scorer"
+
+
+# --- Registry ---
+
+class TestRegistry:
+    def test_field_present_registered(self):
+        assert "field_present" in CHECK_REGISTRY
+
+    def test_label_present_registered(self):
+        assert "label_present" in CHECK_REGISTRY
+
+    def test_unknown_type_raises(self):
+        with pytest.raises(ValueError, match="Unknown check type"):
+            instantiate_checks([{"name": "bad", "type": "nonexistent"}])
+
+
+# --- compute_verdict ---
+
+class TestComputeVerdict:
+    def test_all_pass(self):
+        results = [
+            CheckResult(name="a", passed=True, details="ok"),
+            CheckResult(name="b", passed=True, details="ok"),
+            CheckResult(name="c", passed=True, details="ok"),
+        ]
+        assert compute_verdict(results) == "pass"
+
+    def test_one_fail(self):
+        results = [
+            CheckResult(name="a", passed=True, details="ok"),
+            CheckResult(name="b", passed=False, details="missing"),
+            CheckResult(name="c", passed=True, details="ok"),
+        ]
+        assert compute_verdict(results) == "fail"
+
+    def test_all_fail(self):
+        results = [
+            CheckResult(name="a", passed=False, details="missing"),
+            CheckResult(name="b", passed=False, details="missing"),
+        ]
+        assert compute_verdict(results) == "fail"
+
+    def test_empty_results_pass(self):
+        assert compute_verdict([]) == "pass"
+
+
+# --- FieldPresentCheck ---
+
+class TestFieldPresentCheck:
+    def _make_config(self, fields, auto_fix=None):
+        cfg = {"name": "has_rice", "type": "field_present", "fields": fields}
+        if auto_fix:
+            cfg["auto_fix"] = auto_fix
+        return cfg
+
+    def test_all_fields_present(self):
+        checks = instantiate_checks([
+            self._make_config(["customfield_10862", "customfield_10836"]),
+        ])
+        issue = {"fields": {
+            "customfield_10862": 8,
+            "customfield_10836": 5,
+        }}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "2 fields present" in result.details
+
+    def test_some_fields_missing(self):
+        checks = instantiate_checks([
+            self._make_config(
+                ["customfield_10862", "customfield_10836"],
+                auto_fix="rice_scorer",
+            ),
+        ])
+        issue = {"fields": {"customfield_10862": 8}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "customfield_10836" in result.details
+        assert result.auto_fixable
+        assert result.auto_fix_action == "rice_scorer"
+
+    def test_all_fields_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["customfield_10862", "customfield_10836"]),
+        ])
+        issue = {"fields": {}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "customfield_10862" in result.details
+        assert "customfield_10836" in result.details
+
+    def test_null_field_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": None}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_empty_string_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": ""}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_empty_list_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["labels"]),
+        ])
+        issue = {"fields": {"labels": []}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_zero_is_present(self):
+        """Zero is a valid value (e.g., a score of 0)."""
+        checks = instantiate_checks([
+            self._make_config(["customfield_10862"]),
+        ])
+        issue = {"fields": {"customfield_10862": 0}}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+
+    def test_no_auto_fix_by_default(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {}}
+        result = checks[0].evaluate(issue)
+        assert not result.auto_fixable
+        assert result.auto_fix_action is None
+
+    def test_rice_fields_all_present(self):
+        """Full RICE check: all 4 custom fields populated."""
+        rice_fields = [
+            "customfield_10862", "customfield_10836",
+            "customfield_10838", "customfield_10637",
+        ]
+        checks = instantiate_checks([
+            self._make_config(rice_fields, auto_fix="rice_scorer"),
+        ])
+        issue = {"fields": {
+            "customfield_10862": 8,
+            "customfield_10836": 5,
+            "customfield_10838": {"id": "16144"},
+            "customfield_10637": 3,
+        }}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+
+    def test_rice_fields_partial(self):
+        """RICE check fails if any of the 4 fields is missing."""
+        rice_fields = [
+            "customfield_10862", "customfield_10836",
+            "customfield_10838", "customfield_10637",
+        ]
+        checks = instantiate_checks([
+            self._make_config(rice_fields, auto_fix="rice_scorer"),
+        ])
+        issue = {"fields": {
+            "customfield_10862": 8,
+            "customfield_10836": 5,
+            # confidence and effort missing
+        }}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert result.auto_fixable
+
+
+# --- LabelPresentCheck ---
+
+class TestLabelPresentCheck:
+    def _make_config(self, labels):
+        return {"name": "has_sign_off", "type": "label_present",
+                "labels": labels}
+
+    def test_label_present(self):
+        checks = instantiate_checks([
+            self._make_config(["strat-creator-human-sign-off"]),
+        ])
+        issue = {"fields": {
+            "labels": ["strat-creator-human-sign-off", "other-label"],
+        }}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+
+    def test_label_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["strat-creator-human-sign-off"]),
+        ])
+        issue = {"fields": {"labels": ["other-label"]}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "strat-creator-human-sign-off" in result.details
+
+    def test_no_labels_at_all(self):
+        checks = instantiate_checks([
+            self._make_config(["strat-creator-human-sign-off"]),
+        ])
+        issue = {"fields": {"labels": []}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_multiple_required_labels_all_present(self):
+        checks = instantiate_checks([
+            self._make_config(["label-a", "label-b"]),
+        ])
+        issue = {"fields": {"labels": ["label-a", "label-b", "label-c"]}}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+
+    def test_multiple_required_labels_one_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["label-a", "label-b"]),
+        ])
+        issue = {"fields": {"labels": ["label-a"]}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "label-b" in result.details
+
+
+# --- instantiate_checks with full config ---
+
+class TestInstantiateChecks:
+    def test_pipeline_settings_checks(self):
+        """Instantiate the full hard_checks config from pipeline-settings."""
+        configs = [
+            {
+                "name": "has_rice",
+                "type": "field_present",
+                "fields": [
+                    "customfield_10862", "customfield_10836",
+                    "customfield_10838", "customfield_10637",
+                ],
+                "auto_fix": "rice_scorer",
+            },
+            {
+                "name": "has_priority",
+                "type": "field_present",
+                "fields": ["priority"],
+            },
+            {
+                "name": "has_sign_off",
+                "type": "label_present",
+                "labels": ["strat-creator-human-sign-off"],
+            },
+        ]
+        checks = instantiate_checks(configs)
+        assert len(checks) == 3
+        assert checks[0].name == "has_rice"
+        assert checks[1].name == "has_priority"
+        assert checks[2].name == "has_sign_off"
+
+    def test_full_pass_scenario(self):
+        """Issue with all RICE, priority, and sign-off label passes all checks."""
+        configs = [
+            {
+                "name": "has_rice",
+                "type": "field_present",
+                "fields": [
+                    "customfield_10862", "customfield_10836",
+                    "customfield_10838", "customfield_10637",
+                ],
+                "auto_fix": "rice_scorer",
+            },
+            {
+                "name": "has_priority",
+                "type": "field_present",
+                "fields": ["priority"],
+            },
+            {
+                "name": "has_sign_off",
+                "type": "label_present",
+                "labels": ["strat-creator-human-sign-off"],
+            },
+        ]
+        checks = instantiate_checks(configs)
+        issue = {"fields": {
+            "customfield_10862": 8,
+            "customfield_10836": 5,
+            "customfield_10838": {"id": "16144"},
+            "customfield_10637": 3,
+            "priority": {"name": "Critical"},
+            "labels": ["strat-creator-human-sign-off"],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "pass"
+
+    def test_missing_rice_fails(self):
+        """Issue with priority and sign-off but no RICE fails."""
+        configs = [
+            {
+                "name": "has_rice",
+                "type": "field_present",
+                "fields": [
+                    "customfield_10862", "customfield_10836",
+                    "customfield_10838", "customfield_10637",
+                ],
+                "auto_fix": "rice_scorer",
+            },
+            {
+                "name": "has_priority",
+                "type": "field_present",
+                "fields": ["priority"],
+            },
+            {
+                "name": "has_sign_off",
+                "type": "label_present",
+                "labels": ["strat-creator-human-sign-off"],
+            },
+        ]
+        checks = instantiate_checks(configs)
+        issue = {"fields": {
+            "priority": {"name": "Critical"},
+            "labels": ["strat-creator-human-sign-off"],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        rice_result = results[0]
+        assert not rice_result.passed
+        assert rice_result.auto_fixable
+        assert rice_result.auto_fix_action == "rice_scorer"
+
+    def test_missing_priority_fails(self):
+        """Issue with RICE and sign-off but no priority fails."""
+        configs = [
+            {
+                "name": "has_rice",
+                "type": "field_present",
+                "fields": [
+                    "customfield_10862", "customfield_10836",
+                    "customfield_10838", "customfield_10637",
+                ],
+            },
+            {
+                "name": "has_priority",
+                "type": "field_present",
+                "fields": ["priority"],
+            },
+            {
+                "name": "has_sign_off",
+                "type": "label_present",
+                "labels": ["strat-creator-human-sign-off"],
+            },
+        ]
+        checks = instantiate_checks(configs)
+        issue = {"fields": {
+            "customfield_10862": 8,
+            "customfield_10836": 5,
+            "customfield_10838": {"id": "16144"},
+            "customfield_10637": 3,
+            "labels": ["strat-creator-human-sign-off"],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        priority_result = results[1]
+        assert not priority_result.passed
+        assert not priority_result.auto_fixable
