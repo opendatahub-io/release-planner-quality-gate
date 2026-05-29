@@ -161,6 +161,30 @@ class TestFieldPresentCheck:
         assert not result.auto_fixable
         assert result.auto_fix_action is None
 
+    def test_undefined_priority_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": {"name": "Undefined", "id": "10005"}}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_valid_priority_passes(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": {"name": "Major", "id": "10002"}}}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+
+    def test_undefined_value_in_dropdown_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["customfield_10665"]),
+        ])
+        issue = {"fields": {"customfield_10665": {"value": "Undefined"}}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
     def test_rice_fields_all_present(self):
         """Full RICE check: all 4 custom fields populated."""
         rice_fields = [

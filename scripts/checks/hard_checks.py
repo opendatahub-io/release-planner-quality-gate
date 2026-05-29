@@ -1,6 +1,8 @@
 """Hard check implementations: field_present, label_present."""
 from scripts.checks import BaseCheck, CheckResult, register_check
 
+INVALID_VALUES = {"Undefined", "None", "N/A"}
+
 
 @register_check("field_present")
 class FieldPresentCheck(BaseCheck):
@@ -13,6 +15,10 @@ class FieldPresentCheck(BaseCheck):
         for f in fields:
             val = issue_fields.get(f)
             if val is None or val == "" or val == []:
+                missing.append(f)
+            elif isinstance(val, dict) and val.get("name") in INVALID_VALUES:
+                missing.append(f)
+            elif isinstance(val, dict) and val.get("value") in INVALID_VALUES:
                 missing.append(f)
 
         if not missing:
