@@ -51,11 +51,48 @@ Also read the examples in `references/calibration-examples.md` for additional co
 
 ### Step 3: Research the Ticket
 
-Gather all available evidence:
-1. Read the description thoroughly
-2. Download and read strategy attachments (review docs, refined strategies)
-3. Follow issuelinks to read linked RFE tickets for customer context and approval status
-4. Read all comments for reviewer feedback, strategy review scores, sizing disagreements
+**Strategy and review attachments are the richest source of evidence.** The Jira
+description has limited formatting (ADF), but the attached strategy and review
+documents contain the full analysis from the strat-creator pipeline.
+
+#### 3a. Download and read attachments (highest priority)
+
+List attachments from the ticket's `attachment` field. Look for:
+- **Strategy document** (`*-strategy.md` or the main `.md` attachment): Contains the
+  full refined strategy — HOW, dependencies, impacted teams/components, effort estimates,
+  risks, acceptance criteria, non-functional requirements, and scope boundaries.
+- **Review document** (`*-review.md`): Contains 4-dimension review scores (feasibility,
+  testability, scope, architecture, each 0-2) with detailed prose feedback from
+  independent reviewers. Total score out of 8.
+
+Download each attachment:
+```bash
+curl -s -u "$JIRA_USER:$JIRA_TOKEN" \
+  "$JIRA_SERVER/rest/api/3/attachment/content/{attachmentId}" -L
+```
+
+**How attachment content maps to RICE dimensions:**
+- Strategy's **effort estimate and team count** → RICE Effort
+- Strategy's **dependencies and risks** → RICE Effort and Confidence
+- Strategy's **scope and acceptance criteria** → RICE Reach (who benefits)
+- Review's **total score (X/8)** → RICE Confidence (7-8/8 = 75-100%, 3-6/8 = 50-75%)
+- Review's **feasibility verdict** → RICE Effort (reject/revise = bump effort up)
+- Review's **scope verdict** → RICE Reach and Effort (scope too large = higher effort)
+
+#### 3b. Read the description
+
+The Jira description may contain a summary of the strategy or the business need.
+It complements but does not replace the attachment content.
+
+#### 3c. Follow issuelinks to linked RFEs
+
+Read linked RHAIRFE tickets for customer context, approval status, and priority labels.
+RFE comments often contain customer evidence that informs Reach and Impact.
+
+#### 3d. Read all comments
+
+Check for reviewer feedback, strategy review scores, sizing disagreements,
+and any RICE scoring discussions or prior justifications.
 
 ### Step 4: Apply the RICE Rubric
 
