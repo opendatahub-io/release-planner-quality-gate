@@ -1,0 +1,66 @@
+# Release Quality Gate 1: Feature Definition of Ready for Planning
+# JQL query configuration for issue discovery
+jql:
+  project: RHAISTRAT
+  required_labels:
+    - strat-creator-human-sign-off
+  target_versions:
+    - rhoai-3.5
+    - rhoai-3.5.EA1
+    - rhoai-3.5.EA2
+  excluded_statuses:
+    - Closed
+    - Resolved
+  skip_labels:
+    - rp-qg1-pass
+  order_by: key ASC
+
+# RICE custom field IDs (Jira Prioritization tab)
+rice_fields:
+  reach: customfield_10862
+  impact: customfield_10836
+  confidence: customfield_10838
+  effort: customfield_10637
+  score: customfield_10864           # auto-calculated, read-only
+
+# Confidence dropdown option IDs
+confidence_options:
+  "100": "16144"
+  "75": "16145"
+  "50": "16146"
+
+# Quality gate labels
+labels:
+  gate_pass: rp-qg1-pass
+  gate_fail: rp-qg1-fail
+  auto_rice: rp-qg1-auto-rice
+
+# Check definitions
+checks:
+  hard_checks:
+    - name: has_rice
+      type: field_present
+      fields:
+        - customfield_10862   # Reach
+        - customfield_10836   # Impact
+        - customfield_10838   # Confidence
+        - customfield_10637   # Effort
+      auto_fix: rice_scorer
+
+    - name: has_priority
+      type: field_present
+      fields:
+        - priority
+
+    - name: has_sign_off
+      type: label_present
+      labels:
+        - strat-creator-human-sign-off
+
+# RICE scorer configuration
+rice_scorer:
+  timeout_seconds: 300
+  calibration_jql: >-
+    project = RHAISTRAT
+    AND labels = "strat-creator-human-sign-off"
+    AND cf[10862] IS NOT EMPTY

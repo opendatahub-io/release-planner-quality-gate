@@ -1,0 +1,18 @@
+[project]
+name = "release-planner-quality-gate"
+version = "0.1.0"
+description = "Release Quality Gate 1: Feature Definition of Ready for Planning"
+requires-python = ">=3.11"
+dependencies = [
+    "certifi",
+    "pyyaml",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "jira-emulator @ git+https://github.com/jctanner/jira-emulator.git",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
