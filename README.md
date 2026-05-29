@@ -72,13 +72,17 @@ make run                                    # full run: evaluate, fix, label
 
 ## Checks
 
-Gate 1 runs three hard checks on every feature:
+Gate 1 runs seven hard checks on every feature:
 
 | Check | Type | What It Validates | Auto-Fixable |
 |-------|------|-------------------|--------------|
 | `has_rice` | `field_present` | All 4 RICE fields are set (Reach, Impact, Confidence, Effort) | Yes — triggers Claude skill |
 | `has_priority` | `field_present` | Priority field is set | No |
 | `has_sign_off` | `label_present` | Has `strat-creator-human-sign-off` label | No |
+| `has_components` | `field_present` | At least one component assigned | No |
+| `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
+| `has_docs_required` | `field_present` | Product Documentation Required (`customfield_10665`) is set | No |
+| `has_fix_version` | `field_present` | At least one Fix Version assigned | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
 
@@ -119,7 +123,7 @@ Labels are applied atomically: adding `rp-qg1-pass` removes `rp-qg1-fail` (and v
 ## Testing
 
 ```bash
-make test              # All tests (76 tests)
+make test              # All tests (87 tests)
 make test-unit         # Checks + report only (fast, no server)
 make test-integration  # Quality gate + label management (uses jira-emulator)
 ```
