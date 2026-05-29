@@ -6,6 +6,18 @@ Jira auto-calculates the RICE Score when all four fields are entered. The "Prior
 
 RICE scores are **relative**, not absolute. They are meaningful only when compared to other scores in the same backlog. A score of 40 is not inherently "good" or "bad" — it only matters relative to the other features being scored in the same cycle.
 
+### Who Scores What (in normal human process)
+
+When this AI agent generates RICE scores, it is approximating what multiple humans normally do together:
+- **PMs and UX** confer on Reach, Impact, and Confidence
+- **Engineering delivery leads** (and any partner with significant effort impact) provide the Effort score
+
+The AI agent must compensate by reading strategy reviews (which capture engineering assessment) and linked RFEs (which capture PM/customer context) to approximate both perspectives.
+
+### RHAI-Specific: Relative Scoring, Not Person-Months
+
+RHAI moved away from the "person-month" method because it obscures complexity, dependencies, and unknowns. All Effort scores are relative to one another — never translate them to calendar time. At Red Hat, the Confidence field is a dropdown limited to 50%, 75%, or 100%.
+
 ---
 
 ## Reach (Market)
@@ -88,6 +100,10 @@ High-level relative effort estimate. RHAI uses relative scoring (not person-mont
 
 Effort must include **all work**: design, engineering, QA, documentation, cross-team coordination, and deployment/rollout. Not just "dev time."
 
+**Effort estimates are never commitments.** They are high-level relative assessments provided by people who work directly with the delivery teams. No estimation should require extensive research.
+
+**Effort already accounts for uncertainty.** Unlike Reach and Impact, there is no separate Confidence factor for Effort — uncertainty and complexity are baked into the Effort score itself. A feature with many unknowns should score higher Effort, not lower Confidence.
+
 | Score | Meaning | Guidance |
 |---|---|---|
 | 1 | Low effort | Few unknowns, reasonable scope, one team, fits in a sprint. |
@@ -145,6 +161,7 @@ Re-score when any of these triggers occur:
 - **Strategy review**: A review recommended REVISE or changed the confidence/effort assessment.
 - **Dependency resolved or introduced**: A blocker was completed (reducing effort/increasing confidence) or a new dependency was discovered.
 - **Market shift**: Competitive landscape changed, regulatory requirement emerged or was dropped.
+- **Team change**: If the team providing the Effort estimate changes considerably, a recalibration session is needed — just as teams recalibrate story point estimation.
 - **Quarterly cadence**: At minimum, re-examine scores at the start of each planning cycle. Reach estimates drift as markets shift, and Confidence should increase as discovery work completes.
 
 ### 6. Bias Awareness
