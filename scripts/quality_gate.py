@@ -21,6 +21,10 @@ from scripts.jira_utils import (
     add_labels,
     remove_labels,
 )
+from scripts.rice_invoker import (
+    generate_rice_scores,
+    write_rice_to_jira,
+)
 
 
 CONFIG_PATH = os.path.join(
@@ -218,6 +222,7 @@ def main(argv=None):
     print(f"Found {len(issues)} issue(s) to evaluate.")
 
     checks = instantiate_checks(config["checks"]["hard_checks"])
+    fields = collect_required_fields(config)
     results_by_issue = {}
 
     for issue in issues:
@@ -225,9 +230,39 @@ def main(argv=None):
         results = evaluate_issue(issue, checks)
         results_by_issue[key] = results
 
-    # TODO Phase 4: auto-fix RICE via Claude skill for issues missing RICE
-    # For now, just evaluate and report.
+    # Auto-fix: generate RICE for issues missing it
+    needs_rice = [
+        key for key, results in results_by_issue.items()
+        if any(r.name == "has_rice" and not r.passed and r.auto_fixable
+               for r in results)
+    ]
 
+    rice_generated = {}
+    if needs_rice:
+        timeout = config.get("rice_scorer", {}).get("timeout_seconds", 300)
+        print(f"\nGenerating RICE for {len(needs_rice)} issue(s)...")
+        rice_result = generate_rice_scores(needs_rice, timeout=timeout)
+
+        for rec in rice_result.succeeded:
+            rice_generated[rec.ticket] = rec
+            if not args.dry_run:
+                print(f"  Writing RICE to Jira for {rec.ticket}...")
+                write_rice_to_jira(rec, server, user, token)
+
+        # Re-fetch and re-evaluate issues that got RICE written
+        if not args.dry_run and rice_result.succeeded:
+            print(f"\nRe-evaluating {len(rice_result.succeeded)} RICE'd issues...")
+            for rec in rice_result.succeeded:
+                issue = get_issue(server, user, token, rec.ticket,
+                                 fields=fields)
+                results_by_issue[rec.ticket] = evaluate_issue(issue, checks)
+                # Update the issue in the list for label management
+                for i, orig in enumerate(issues):
+                    if orig["key"] == rec.ticket:
+                        issues[i] = issue
+                        break
+
+    # Apply verdict labels (full run only)
     if not args.dry_run:
         label_config = config["labels"]
         for issue in issues:
@@ -237,12 +272,18 @@ def main(argv=None):
             apply_verdict_label(
                 server, user, token, key, current_labels,
                 verdict, label_config)
-            print(f"  {key}: {verdict.upper()}"
-                  f" → label applied")
+            print(f"  {key}: {verdict.upper()} → label applied")
     else:
         for key, results in results_by_issue.items():
             verdict = compute_verdict(results)
-            print(f"  {key}: {verdict.upper()} (dry-run, no labels applied)")
+            rice_note = ""
+            if key in rice_generated:
+                rec = rice_generated[key]
+                rice_note = (f" | RICE generated: R={rec.reach} I={rec.impact}"
+                             f" C={rec.confidence}% E={rec.effort}"
+                             f" → {rec.expected_rice}")
+            print(f"  {key}: {verdict.upper()}"
+                  f" (dry-run, no Jira writes){rice_note}")
 
     print_summary(results_by_issue)
 
