@@ -94,6 +94,11 @@ class TestLoadConfig:
 # --- collect_required_fields ---
 
 class TestCollectRequiredFields:
+    def test_returns_list(self):
+        config = load_config()
+        fields = collect_required_fields(config)
+        assert isinstance(fields, list)
+
     def test_includes_rice_fields(self):
         config = load_config()
         fields = collect_required_fields(config)

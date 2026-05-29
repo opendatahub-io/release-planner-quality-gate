@@ -70,17 +70,17 @@ def collect_required_fields(config):
     rice = config.get("rice_fields", {})
     for field_id in rice.values():
         fields.add(field_id)
-    return ",".join(sorted(fields))
+    return sorted(fields)
 
 
 def discover_issues(config, server, user, token, issue_key=None):
     """Discover issues to evaluate — single key or JQL batch."""
-    fields_str = collect_required_fields(config)
+    fields = collect_required_fields(config)
     if issue_key:
-        issue = get_issue(server, user, token, issue_key, fields=fields_str)
+        issue = get_issue(server, user, token, issue_key, fields=fields)
         return [issue] if issue else []
     jql = build_jql(config)
-    return search_issues(server, user, token, jql, fields=fields_str)
+    return search_issues(server, user, token, jql, fields=fields)
 
 
 def evaluate_issue(issue, checks):
