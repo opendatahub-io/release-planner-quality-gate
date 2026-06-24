@@ -1,11 +1,15 @@
 """Tests for RICE invoker — output parsing and result handling."""
+import subprocess
+
 import pytest
 
+import scripts.rice_invoker as rice_invoker
 from scripts.rice_invoker import (
     parse_rice_output,
     is_already_scored,
     is_error,
     RiceRecommendation,
+    RiceInvocationError,
     CONFIDENCE_OPTIONS,
 )
 
@@ -168,3 +172,36 @@ class TestRiceRecommendation:
         assert rec.ticket == "RHAISTRAT-100"
         assert rec.reach == 8
         assert rec.expected_rice == 10.0
+
+
+# --- invoke_rice_skill ---
+
+class TestInvokeRiceSkill:
+    def test_missing_claude_binary_raises_actionable_error(self, monkeypatch):
+        def fake_run(*args, **kwargs):
+            raise FileNotFoundError("claude not found")
+
+        monkeypatch.setattr(rice_invoker.subprocess, "run", fake_run)
+
+        with pytest.raises(RiceInvocationError) as exc_info:
+            rice_invoker.invoke_rice_skill("RHAISTRAT-1938")
+
+        assert "not installed or not on PATH" in str(exc_info.value)
+        assert "RHAISTRAT-1938" in str(exc_info.value)
+
+    def test_nonzero_exit_surfaces_stderr(self, monkeypatch):
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args[0],
+                130,
+                stdout="",
+                stderr="authentication required",
+            )
+
+        monkeypatch.setattr(rice_invoker.subprocess, "run", fake_run)
+
+        with pytest.raises(RiceInvocationError) as exc_info:
+            rice_invoker.invoke_rice_skill("RHAISTRAT-1938")
+
+        assert "process exited with code 130" in str(exc_info.value)
+        assert "authentication required" in str(exc_info.value)

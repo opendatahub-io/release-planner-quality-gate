@@ -4,10 +4,6 @@ jql:
   project: RHAISTRAT
   required_labels:
     - strat-creator-human-sign-off
-  target_versions:
-    - rhoai-3.5
-    - rhoai-3.5.EA1
-    - rhoai-3.5.EA2
   excluded_statuses:
     - Closed
     - Resolved

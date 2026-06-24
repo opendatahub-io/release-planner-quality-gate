@@ -9,6 +9,10 @@ import subprocess
 from dataclasses import dataclass, field
 
 
+class RiceInvocationError(RuntimeError):
+    """Raised when the Claude CLI cannot produce a RICE recommendation."""
+
+
 @dataclass
 class RiceRecommendation:
     """Parsed RICE recommendation from the skill output."""
@@ -87,21 +91,67 @@ def is_error(output: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _build_invocation_error(issue_key: str, reason: str,
+                            stderr: str = "", stdout: str = "") -> str:
+    """Build an actionable Claude CLI failure message."""
+    details = [
+        f"Claude CLI failed while generating RICE for {issue_key}: {reason}."
+    ]
+
+    stderr = stderr.strip()
+    stdout = stdout.strip()
+
+    if stderr:
+        details.append(f"stderr: {stderr}")
+    elif stdout:
+        details.append(f"stdout: {stdout}")
+
+    return " ".join(details)
+
+
 def invoke_rice_skill(issue_key: str, timeout: int = 300) -> str:
     """Invoke the rice-score Claude skill headlessly."""
     repo_root = os.path.join(os.path.dirname(__file__), "..")
-    proc = subprocess.run(
-        [
-            "claude", "-p", f"/rice-score {issue_key}",
-            "--dangerously-skip-permissions",
-            "--model", "claude-opus-4-6",
-            "--verbose",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=os.path.abspath(repo_root),
-    )
+    try:
+        proc = subprocess.run(
+            [
+                "claude", "-p", f"/rice-score {issue_key}",
+                "--dangerously-skip-permissions",
+                "--model", "claude-opus-4-6",
+                "--verbose",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=os.path.abspath(repo_root),
+        )
+    except FileNotFoundError as exc:
+        raise RiceInvocationError(
+            _build_invocation_error(
+                issue_key,
+                "the `claude` executable is not installed or not on PATH",
+            )
+        ) from exc
+
+    if proc.returncode != 0:
+        raise RiceInvocationError(
+            _build_invocation_error(
+                issue_key,
+                f"process exited with code {proc.returncode}",
+                stderr=proc.stderr,
+                stdout=proc.stdout,
+            )
+        )
+
+    if not proc.stdout.strip():
+        raise RiceInvocationError(
+            _build_invocation_error(
+                issue_key,
+                "process returned no structured output",
+                stderr=proc.stderr,
+            )
+        )
+
     return proc.stdout
 
 
@@ -137,6 +187,9 @@ def generate_rice_scores(issue_keys: list[str],
                 result.failed.append(key)
                 print(f"    {key}: failed to parse RICE output")
 
+        except RiceInvocationError as exc:
+            result.failed.append(key)
+            print(f"    {key}: {exc}")
         except subprocess.TimeoutExpired:
             result.timed_out.append(key)
             print(f"    {key}: timed out after {timeout}s")

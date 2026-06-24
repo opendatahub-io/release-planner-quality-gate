@@ -22,7 +22,6 @@ class TestBuildJql:
             "jql": {
                 "project": "RHAISTRAT",
                 "required_labels": ["strat-creator-human-sign-off"],
-                "target_versions": ["rhoai-3.5", "rhoai-3.5.EA1", "rhoai-3.5.EA2"],
                 "excluded_statuses": ["Closed", "Resolved"],
                 "skip_labels": ["rp-qg1-pass"],
                 "order_by": "key ASC",
@@ -31,7 +30,7 @@ class TestBuildJql:
         jql = build_jql(config)
         assert 'project = RHAISTRAT' in jql
         assert 'labels = "strat-creator-human-sign-off"' in jql
-        assert 'cf[10855] IN ("rhoai-3.5", "rhoai-3.5.EA1", "rhoai-3.5.EA2")' in jql
+        assert "cf[10855]" not in jql
         assert 'status != "Closed"' in jql
         assert 'status != "Resolved"' in jql
         assert 'labels != "rp-qg1-pass"' in jql
