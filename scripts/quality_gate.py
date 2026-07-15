@@ -125,7 +125,7 @@ CHECK_LABELS = {
     "has_components": "Components",
     "has_release_type": "Release Type",
     "has_docs_required": "Product Docs Required",
-    "has_fix_version": "Fix Version",
+    "has_target_version": "Target Version",
 }
 
 FIELD_FRIENDLY_NAMES = {
@@ -135,9 +135,9 @@ FIELD_FRIENDLY_NAMES = {
     "customfield_10637": "Effort",
     "customfield_10851": "Release Type",
     "customfield_10665": "Product Documentation Required",
+    "customfield_10855": "Target Version",
     "priority": "Priority",
     "components": "Components",
-    "fixVersions": "Fix Version",
 }
 
 
@@ -165,9 +165,13 @@ def _extract_field_detail(issue, check_name):
     if check_name == "has_docs_required":
         dr = f.get("customfield_10665")
         return dr.get("value", "?") if isinstance(dr, dict) else str(dr or "?")
-    if check_name == "has_fix_version":
-        fv = f.get("fixVersions", [])
-        return ", ".join(v.get("name", "?") for v in fv) if fv else "?"
+    if check_name == "has_target_version":
+        tv = f.get("customfield_10855", [])
+        if isinstance(tv, list):
+            return ", ".join(v.get("name", "?") for v in tv) if tv else "?"
+        if isinstance(tv, dict):
+            return tv.get("name", "?")
+        return str(tv or "?")
     return "?"
 
 
