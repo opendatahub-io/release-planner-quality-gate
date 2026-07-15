@@ -274,7 +274,7 @@ class TestLabelPresentCheck:
         assert "label-b" in result.details
 
 
-# --- New hard checks: components, release type, docs required, fix version ---
+# --- New hard checks: components, release type, docs required, target version ---
 
 class TestNewHardChecks:
     def test_components_present(self):
@@ -317,20 +317,20 @@ class TestNewHardChecks:
         issue = {"fields": {"customfield_10665": {"value": "Yes"}}}
         assert checks[0].evaluate(issue).passed
 
-    def test_fix_version_present(self):
+    def test_target_version_present(self):
         checks = instantiate_checks([
-            {"name": "has_fix_version", "type": "field_present",
-             "fields": ["fixVersions"]},
+            {"name": "has_target_version", "type": "field_present",
+             "fields": ["customfield_10855"]},
         ])
-        issue = {"fields": {"fixVersions": [{"name": "rhoai-3.5"}]}}
+        issue = {"fields": {"customfield_10855": [{"name": "rhoai-3.5"}]}}
         assert checks[0].evaluate(issue).passed
 
-    def test_fix_version_empty_fails(self):
+    def test_target_version_empty_fails(self):
         checks = instantiate_checks([
-            {"name": "has_fix_version", "type": "field_present",
-             "fields": ["fixVersions"]},
+            {"name": "has_target_version", "type": "field_present",
+             "fields": ["customfield_10855"]},
         ])
-        issue = {"fields": {"fixVersions": []}}
+        issue = {"fields": {"customfield_10855": []}}
         assert not checks[0].evaluate(issue).passed
 
 
@@ -354,8 +354,8 @@ ALL_HARD_CHECKS = [
      "fields": ["customfield_10851"]},
     {"name": "has_docs_required", "type": "field_present",
      "fields": ["customfield_10665"]},
-    {"name": "has_fix_version", "type": "field_present",
-     "fields": ["fixVersions"]},
+    {"name": "has_target_version", "type": "field_present",
+     "fields": ["customfield_10855"]},
 ]
 
 FULL_PASSING_ISSUE = {"fields": {
@@ -368,7 +368,7 @@ FULL_PASSING_ISSUE = {"fields": {
     "components": [{"name": "Dashboard"}],
     "customfield_10851": {"value": "Tech Preview"},
     "customfield_10665": {"value": "Yes"},
-    "fixVersions": [{"name": "rhoai-3.5"}],
+    "customfield_10855": [{"name": "rhoai-3.5"}],
 }}
 
 
@@ -462,11 +462,11 @@ class TestInstantiateChecks:
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
 
-    def test_missing_fix_version_fails(self):
+    def test_missing_target_version_fails(self):
         checks = instantiate_checks(ALL_HARD_CHECKS)
         issue = {**FULL_PASSING_ISSUE, "fields": {
             **FULL_PASSING_ISSUE["fields"],
-            "fixVersions": [],
+            "customfield_10855": [],
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"

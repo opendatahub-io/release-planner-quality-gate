@@ -68,10 +68,10 @@ checks:
       fields:
         - customfield_10665   # Product Documentation Required
 
-    - name: has_fix_version
+    - name: has_target_version
       type: field_present
       fields:
-        - fixVersions
+        - customfield_10855   # Target Version
 
 # RICE scorer configuration
 rice_scorer:

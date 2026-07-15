@@ -82,7 +82,7 @@ Gate 1 runs seven hard checks on every feature:
 | `has_components` | `field_present` | At least one component assigned | No |
 | `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
 | `has_docs_required` | `field_present` | Product Documentation Required (`customfield_10665`) is set | No |
-| `has_fix_version` | `field_present` | At least one Fix Version assigned | No |
+| `has_target_version` | `field_present` | Target Version (`customfield_10855`) is set | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
 

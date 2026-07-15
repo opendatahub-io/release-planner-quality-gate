@@ -30,6 +30,20 @@ Uses `scripts/jira_utils.py` (copied from strat-creator). Requires env vars:
 - `JIRA_USER` — Jira email
 - `JIRA_TOKEN` — API token
 
+## Hard Checks
+
+Seven hard checks (all must pass for `rp-qg1-pass`):
+
+| Check | What It Validates |
+|-------|-------------------|
+| `has_rice` | All 4 RICE fields present |
+| `has_priority` | Priority set |
+| `has_sign_off` | `strat-creator-human-sign-off` label |
+| `has_components` | At least one component |
+| `has_release_type` | Release Type (`customfield_10851`) |
+| `has_docs_required` | Product Documentation Required (`customfield_10665`) |
+| `has_target_version` | Target Version (`customfield_10855`) — planning intent, not Fix Version |
+
 ## RICE Custom Fields
 
 | Field | ID | Type |
@@ -39,6 +53,7 @@ Uses `scripts/jira_utils.py` (copied from strat-creator). Requires env vars:
 | Confidence | customfield_10838 | dropdown (option IDs: 16144=100%, 16145=75%, 16146=50%) |
 | Effort | customfield_10637 | number (1,2,3,5,8,13) |
 | RICE Score | customfield_10864 | auto-calculated, never set manually |
+| Target Version | customfield_10855 | version(s) — planning intent (QG1 hard check) |
 
 ## Labels
 
