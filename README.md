@@ -120,6 +120,8 @@ Effort is relative complexity, not calendar time. E=13 is a red flag that the fe
 
 Labels are applied atomically: adding `rp-qg1-pass` removes `rp-qg1-fail` (and vice versa). Existing unrelated labels are untouched.
 
+On re-runs, the orchestrator still evaluates every candidate (so fixes can flip fail→pass automatically), but **skips Jira comment/label writes** when the check result fingerprint (`QG1-FP`) is unchanged and labels already match. That prevents daily comment churn on sticky failures.
+
 ## Testing
 
 ```bash

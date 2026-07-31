@@ -3,8 +3,10 @@
 Main orchestrator: discovers issues, evaluates checks, manages labels.
 """
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -218,32 +220,63 @@ def build_gate_comment(issue, check_results, verdict, label_config):
 
     lines.append("")
     lines.append(f"Label applied: {label}")
+    lines.append(f"QG1-FP: {compute_result_fingerprint(check_results, verdict)}")
 
     if verdict == "fail":
-        fail_label = label_config["gate_fail"]
         lines.append("")
         lines.append(
-            f"To resolve: fix the failing checks above in Jira, then "
-            f"remove the **{fail_label}** label. The next pipeline run "
-            f"will re-evaluate this feature automatically."
+            "To resolve: fix the failing checks above in Jira. "
+            "The next pipeline run will re-evaluate automatically and "
+            "update this comment only if the result changes."
         )
 
     return "\n".join(lines)
 
 
 GATE_COMMENT_MARKER = "Release Quality Gate 1: Feature Definition of Ready for Planning"
+FINGERPRINT_RE = re.compile(r"QG1-FP:\s*([a-f0-9]{16,64})", re.IGNORECASE)
+
+
+def compute_result_fingerprint(check_results, verdict):
+    """Stable hash of verdict + per-check outcomes for change detection."""
+    parts = [f"verdict={verdict}"]
+    for r in check_results:
+        status = "pass" if r.passed else "fail"
+        detail = "ok" if r.passed else _friendly_fail_details(r.details)
+        parts.append(f"{r.name}:{status}:{detail}")
+    payload = "|".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def extract_fingerprint(comment_text):
+    """Pull QG1-FP hash from a gate comment body, if present."""
+    match = FINGERPRINT_RE.search(comment_text or "")
+    return match.group(1).lower() if match else None
+
+
+def labels_match_verdict(current_labels, verdict, label_config):
+    """True when pass/fail labels already match the verdict (no swap needed)."""
+    pass_label = label_config["gate_pass"]
+    fail_label = label_config["gate_fail"]
+    labels = current_labels or []
+    if verdict == "pass":
+        return pass_label in labels and fail_label not in labels
+    return fail_label in labels and pass_label not in labels
 
 
 def _find_gate_comment(server, user, token, issue_key):
-    """Find an existing gate comment by looking for the marker text."""
+    """Find an existing gate comment.
+
+    Returns (comment_id, markdown_text) or (None, None).
+    """
     from scripts.jira_utils import get_comments, adf_to_markdown
     comments = get_comments(server, user, token, issue_key)
     for comment in comments:
         body = comment.get("body", {})
         text = adf_to_markdown(body) if isinstance(body, dict) else str(body)
         if GATE_COMMENT_MARKER in text:
-            return comment.get("id")
-    return None
+            return comment.get("id"), text
+    return None, None
 
 
 def _update_comment(server, user, token, issue_key, comment_id, body_adf):
@@ -254,15 +287,27 @@ def _update_comment(server, user, token, issue_key, comment_id, body_adf):
                                body={"body": body_adf}, method="PUT")
 
 
-def post_gate_comment(server, user, token, issue_key, comment_md):
+def post_gate_comment(server, user, token, issue_key, comment_md,
+                      existing_id=None):
     """Post or update the gate result comment on Jira."""
     comment_adf = markdown_to_adf(comment_md)
-    existing_id = _find_gate_comment(server, user, token, issue_key)
+    if existing_id is None:
+        existing_id, _ = _find_gate_comment(server, user, token, issue_key)
     if existing_id:
         _update_comment(server, user, token, issue_key, existing_id,
                         comment_adf)
     else:
         add_comment(server, user, token, issue_key, comment_adf)
+
+
+def should_skip_jira_write(existing_fingerprint, new_fingerprint,
+                           current_labels, verdict, label_config):
+    """Skip comment/label writes when result fingerprint and labels are unchanged."""
+    if not existing_fingerprint:
+        return False
+    if existing_fingerprint.lower() != new_fingerprint.lower():
+        return False
+    return labels_match_verdict(current_labels, verdict, label_config)
 
 
 def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
@@ -411,7 +456,9 @@ def main(argv=None):
                         issues[i] = issue
                         break
 
-    # Apply verdict labels and post gate comment (full run only)
+    # Apply verdict labels and post gate comment (full run only).
+    # Skip Jira writes when the result fingerprint is unchanged and labels
+    # already match — avoids daily comment churn on sticky fails.
     if not args.dry_run:
         label_config = config["labels"]
         for issue in issues:
@@ -419,12 +466,24 @@ def main(argv=None):
             results = results_by_issue[key]
             verdict = compute_verdict(results)
             current_labels = issue.get("fields", {}).get("labels", [])
+            new_fp = compute_result_fingerprint(results, verdict)
+            existing_id, existing_text = _find_gate_comment(
+                server, user, token, key)
+            existing_fp = extract_fingerprint(existing_text)
+            if should_skip_jira_write(
+                    existing_fp, new_fp, current_labels, verdict,
+                    label_config):
+                print(f"  {key}: {verdict.upper()}"
+                      f" (unchanged, skip write)")
+                continue
             apply_verdict_label(
                 server, user, token, key, current_labels,
                 verdict, label_config)
             comment_md = build_gate_comment(
                 issue, results, verdict, label_config)
-            post_gate_comment(server, user, token, key, comment_md)
+            post_gate_comment(
+                server, user, token, key, comment_md,
+                existing_id=existing_id)
             print(f"  {key}: {verdict.upper()} → label + comment applied")
     else:
         for key, results in results_by_issue.items():
