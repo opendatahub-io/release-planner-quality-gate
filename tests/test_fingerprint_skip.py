@@ -50,8 +50,8 @@ class TestFingerprint:
         fp = compute_result_fingerprint(results, "fail")
         assert f"QG1-FP: {fp}" in md
         assert extract_fingerprint(md) == fp
-        assert "remove the" not in md.lower()
-        assert "only if the result changes" in md
+        assert "only if the result changes or the gate labels don't match yet" in md
+        assert "only if the result changes." not in md
 
 
 class TestShouldSkipJiraWrite:

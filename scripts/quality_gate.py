@@ -227,7 +227,8 @@ def build_gate_comment(issue, check_results, verdict, label_config):
         lines.append(
             "To resolve: fix the failing checks above in Jira. "
             "The next pipeline run will re-evaluate automatically and "
-            "update this comment only if the result changes."
+            "update this comment and labels only if the result changes or "
+            "the gate labels don't match yet."
         )
 
     return "\n".join(lines)
@@ -239,12 +240,18 @@ FINGERPRINT_RE = re.compile(r"QG1-FP:\s*([a-f0-9]{16,64})", re.IGNORECASE)
 
 def compute_result_fingerprint(check_results, verdict):
     """Stable hash of verdict + per-check outcomes for change detection."""
-    parts = [f"verdict={verdict}"]
-    for r in check_results:
-        status = "pass" if r.passed else "fail"
-        detail = "ok" if r.passed else _friendly_fail_details(r.details)
-        parts.append(f"{r.name}:{status}:{detail}")
-    payload = "|".join(parts)
+    data = {
+        "verdict": verdict,
+        "checks": [
+            {
+                "name": r.name,
+                "status": "pass" if r.passed else "fail",
+                "detail": "ok" if r.passed else _friendly_fail_details(r.details),
+            }
+            for r in check_results
+        ],
+    }
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
