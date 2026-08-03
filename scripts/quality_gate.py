@@ -272,19 +272,55 @@ def labels_match_verdict(current_labels, verdict, label_config):
     return fail_label in labels and pass_label not in labels
 
 
-def _find_gate_comment(server, user, token, issue_key):
-    """Find an existing gate comment.
+_current_account_id = None
+
+
+def _get_current_account_id(server, user, token):
+    """Resolve the authenticated Jira accountId (cached for the process)."""
+    global _current_account_id
+    if _current_account_id is not None:
+        return _current_account_id
+    from scripts.jira_utils import api_call_with_retry
+    me = api_call_with_retry(server, "/myself", user, token)
+    _current_account_id = (me or {}).get("accountId")
+    return _current_account_id
+
+
+def _comment_authored_by_current_user(comment, server, user, token):
+    """True when the comment author is the authenticated API user."""
+    author = comment.get("author") or {}
+    account_id = _get_current_account_id(server, user, token)
+    if account_id and author.get("accountId") == account_id:
+        return True
+    # Fallback for environments where /myself is unavailable in tests.
+    email = (author.get("emailAddress") or "").lower()
+    return bool(email and email == (user or "").lower())
+
+
+def _find_gate_comment(server, user, token, issue_key, owned_by_self=False):
+    """Find an existing gate comment (latest match).
+
+    When owned_by_self is True, only comments authored by the authenticated
+    user are considered — required because Jira rejects edits to other users'
+    comments even when they contain the gate marker.
 
     Returns (comment_id, markdown_text) or (None, None).
     """
     from scripts.jira_utils import get_comments, adf_to_markdown
     comments = get_comments(server, user, token, issue_key)
+    matches = []
     for comment in comments:
         body = comment.get("body", {})
         text = adf_to_markdown(body) if isinstance(body, dict) else str(body)
-        if GATE_COMMENT_MARKER in text:
-            return comment.get("id"), text
-    return None, None
+        if GATE_COMMENT_MARKER not in text:
+            continue
+        if owned_by_self and not _comment_authored_by_current_user(
+                comment, server, user, token):
+            continue
+        matches.append((comment.get("id"), text))
+    if not matches:
+        return None, None
+    return matches[-1]
 
 
 def _update_comment(server, user, token, issue_key, comment_id, body_adf):
@@ -299,13 +335,14 @@ def post_gate_comment(server, user, token, issue_key, comment_md,
                       existing_id=None):
     """Post or update the gate result comment on Jira.
 
-    If updating an existing comment fails with 400/403 (e.g. bot cannot edit
-    a comment it no longer owns), fall back to posting a new comment so the
-    batch can continue.
+    Only updates comments authored by the authenticated user. Marker-matching
+    comments from humans/other bots are left alone and a new comment is added.
+    If an owned-comment update still fails with 400/403, fall back to add.
     """
     comment_adf = markdown_to_adf(comment_md)
     if existing_id is None:
-        existing_id, _ = _find_gate_comment(server, user, token, issue_key)
+        existing_id, _ = _find_gate_comment(
+            server, user, token, issue_key, owned_by_self=True)
     if existing_id:
         try:
             _update_comment(server, user, token, issue_key, existing_id,
@@ -332,9 +369,12 @@ def write_issue_gate_result(server, user, token, issue, results, label_config):
     verdict = compute_verdict(results)
     current_labels = issue.get("fields", {}).get("labels", [])
     new_fp = compute_result_fingerprint(results, verdict)
-    existing_id, existing_text = _find_gate_comment(
-        server, user, token, key)
-    existing_fp = extract_fingerprint(existing_text)
+    # Fingerprint may come from any gate comment; updates only target our own.
+    own_id, own_text = _find_gate_comment(
+        server, user, token, key, owned_by_self=True)
+    _, any_text = _find_gate_comment(
+        server, user, token, key, owned_by_self=False)
+    existing_fp = extract_fingerprint(own_text or any_text)
     if should_skip_jira_write(
             existing_fp, new_fp, current_labels, verdict, label_config):
         return "skipped"
@@ -343,7 +383,7 @@ def write_issue_gate_result(server, user, token, issue, results, label_config):
     comment_md = build_gate_comment(
         issue, results, verdict, label_config)
     post_gate_comment(
-        server, user, token, key, comment_md, existing_id=existing_id)
+        server, user, token, key, comment_md, existing_id=own_id)
     return "written"
 
 
