@@ -89,6 +89,15 @@ class TestLoadConfig:
         assert labels["gate_fail"] == "rp-qg1-fail"
         assert labels["auto_rice"] == "rp-qg1-auto-rice"
 
+    def test_fpdor_phase1_checks_configured(self):
+        config = load_config()
+        names = {c["name"]: c["type"] for c in config["checks"]["hard_checks"]}
+        assert names["has_pm"] == "field_present"
+        assert names["has_delivery_owner"] == "field_present"
+        assert names["has_rubric_pass"] == "label_present"
+        assert names["has_docs_impact"] == "docs_impact"
+        assert "has_docs_required" not in names
+
 
 # --- collect_required_fields ---
 
@@ -111,6 +120,14 @@ class TestCollectRequiredFields:
         fields = collect_required_fields(config)
         assert "priority" in fields
         assert "labels" in fields
+
+    def test_includes_fpdor_phase1_fields(self):
+        config = load_config()
+        fields = collect_required_fields(config)
+        assert "customfield_10469" in fields  # Product Manager
+        assert "assignee" in fields
+        assert "customfield_10665" in fields  # docs required
+        assert "components" in fields
 
 
 # --- evaluate_issue ---
