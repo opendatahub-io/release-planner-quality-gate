@@ -122,6 +122,8 @@ Labels are applied atomically: adding `rp-qg1-pass` removes `rp-qg1-fail` (and v
 
 On re-runs, the orchestrator still evaluates every candidate (so fixes can flip fail→pass automatically), but **skips Jira comment/label writes** when the check result fingerprint (`QG1-FP`) is unchanged and labels already match. That prevents daily comment churn on sticky failures.
 
+Batch runs write `artifacts/run-data.json` **before** applying labels/comments, isolate per-issue Jira write failures (one bad ticket cannot abort the rest), and fall back to posting a new gate comment when updating an existing one returns HTTP 400/403 (edit denied).
+
 ## Testing
 
 ```bash

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 from datetime import datetime, timezone
 
 import yaml
@@ -296,15 +297,54 @@ def _update_comment(server, user, token, issue_key, comment_id, body_adf):
 
 def post_gate_comment(server, user, token, issue_key, comment_md,
                       existing_id=None):
-    """Post or update the gate result comment on Jira."""
+    """Post or update the gate result comment on Jira.
+
+    If updating an existing comment fails with 400/403 (e.g. bot cannot edit
+    a comment it no longer owns), fall back to posting a new comment so the
+    batch can continue.
+    """
     comment_adf = markdown_to_adf(comment_md)
     if existing_id is None:
         existing_id, _ = _find_gate_comment(server, user, token, issue_key)
     if existing_id:
-        _update_comment(server, user, token, issue_key, existing_id,
-                        comment_adf)
+        try:
+            _update_comment(server, user, token, issue_key, existing_id,
+                            comment_adf)
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 403):
+                raise
+            print(
+                f"  {issue_key}: cannot edit comment {existing_id} "
+                f"(HTTP {e.code}); posting a new comment instead",
+                file=sys.stderr,
+            )
+            add_comment(server, user, token, issue_key, comment_adf)
     else:
         add_comment(server, user, token, issue_key, comment_adf)
+
+
+def write_issue_gate_result(server, user, token, issue, results, label_config):
+    """Apply labels + gate comment for one issue.
+
+    Returns "skipped" when fingerprint/labels are unchanged, else "written".
+    """
+    key = issue["key"]
+    verdict = compute_verdict(results)
+    current_labels = issue.get("fields", {}).get("labels", [])
+    new_fp = compute_result_fingerprint(results, verdict)
+    existing_id, existing_text = _find_gate_comment(
+        server, user, token, key)
+    existing_fp = extract_fingerprint(existing_text)
+    if should_skip_jira_write(
+            existing_fp, new_fp, current_labels, verdict, label_config):
+        return "skipped"
+    apply_verdict_label(
+        server, user, token, key, current_labels, verdict, label_config)
+    comment_md = build_gate_comment(
+        issue, results, verdict, label_config)
+    post_gate_comment(
+        server, user, token, key, comment_md, existing_id=existing_id)
+    return "written"
 
 
 def should_skip_jira_write(existing_fingerprint, new_fingerprint,
@@ -463,35 +503,36 @@ def main(argv=None):
                         issues[i] = issue
                         break
 
+    print_summary(results_by_issue)
+
+    # Emit artifacts before Jira writes so CI still gets run-data.json if a
+    # later comment/label write crashes the process.
+    run_data = build_run_data(
+        results_by_issue, config, args.dry_run, mode, args.issue)
+    artifact_path = write_artifacts(run_data)
+    print(f"Artifacts written to {artifact_path}")
+
     # Apply verdict labels and post gate comment (full run only).
     # Skip Jira writes when the result fingerprint is unchanged and labels
     # already match — avoids daily comment churn on sticky fails.
+    # Isolate per-issue failures so one HTTP error cannot abort the batch.
     if not args.dry_run:
         label_config = config["labels"]
         for issue in issues:
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
-            current_labels = issue.get("fields", {}).get("labels", [])
-            new_fp = compute_result_fingerprint(results, verdict)
-            existing_id, existing_text = _find_gate_comment(
-                server, user, token, key)
-            existing_fp = extract_fingerprint(existing_text)
-            if should_skip_jira_write(
-                    existing_fp, new_fp, current_labels, verdict,
-                    label_config):
-                print(f"  {key}: {verdict.upper()}"
-                      f" (unchanged, skip write)")
-                continue
-            apply_verdict_label(
-                server, user, token, key, current_labels,
-                verdict, label_config)
-            comment_md = build_gate_comment(
-                issue, results, verdict, label_config)
-            post_gate_comment(
-                server, user, token, key, comment_md,
-                existing_id=existing_id)
-            print(f"  {key}: {verdict.upper()} → label + comment applied")
+            try:
+                outcome = write_issue_gate_result(
+                    server, user, token, issue, results, label_config)
+                if outcome == "skipped":
+                    print(f"  {key}: {verdict.upper()}"
+                          f" (unchanged, skip write)")
+                else:
+                    print(f"  {key}: {verdict.upper()}"
+                          f" → label + comment applied")
+            except Exception as exc:
+                print(f"  {key}: Jira write failed: {exc}", file=sys.stderr)
     else:
         for key, results in results_by_issue.items():
             verdict = compute_verdict(results)
@@ -503,13 +544,6 @@ def main(argv=None):
                              f" → {rec.expected_rice}")
             print(f"  {key}: {verdict.upper()}"
                   f" (dry-run, no Jira writes){rice_note}")
-
-    print_summary(results_by_issue)
-
-    run_data = build_run_data(
-        results_by_issue, config, args.dry_run, mode, args.issue)
-    artifact_path = write_artifacts(run_data)
-    print(f"Artifacts written to {artifact_path}")
 
 
 if __name__ == "__main__":

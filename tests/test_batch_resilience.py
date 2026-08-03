@@ -1,0 +1,142 @@
+"""Tests for batch write resilience (edit-denied fallback + per-issue isolation)."""
+import urllib.error
+
+import pytest
+
+from scripts.checks import CheckResult
+from scripts.quality_gate import post_gate_comment, write_issue_gate_result
+
+
+LABEL_CONFIG = {
+    "gate_pass": "rp-qg1-pass",
+    "gate_fail": "rp-qg1-fail",
+}
+
+
+def _http_error(code, body="permission denied"):
+    return urllib.error.HTTPError(
+        url="https://example.test/rest/api/3/issue/X/comment/1",
+        code=code,
+        msg="error",
+        hdrs=None,
+        fp=None,
+    )
+
+
+class TestPostGateCommentFallback:
+    def test_update_success_no_add(self, monkeypatch):
+        calls = {"update": 0, "add": 0}
+
+        def fake_update(*_a, **_k):
+            calls["update"] += 1
+
+        def fake_add(*_a, **_k):
+            calls["add"] += 1
+
+        monkeypatch.setattr(
+            "scripts.quality_gate._update_comment", fake_update)
+        monkeypatch.setattr("scripts.quality_gate.add_comment", fake_add)
+        monkeypatch.setattr(
+            "scripts.quality_gate.markdown_to_adf", lambda md: {"md": md})
+
+        post_gate_comment("s", "u", "t", "RHAISTRAT-1", "body", existing_id="99")
+        assert calls == {"update": 1, "add": 0}
+
+    @pytest.mark.parametrize("code", [400, 403])
+    def test_edit_denied_falls_back_to_add(self, monkeypatch, code):
+        calls = {"update": 0, "add": 0}
+
+        def fake_update(*_a, **_k):
+            calls["update"] += 1
+            raise _http_error(code)
+
+        def fake_add(*_a, **_k):
+            calls["add"] += 1
+
+        monkeypatch.setattr(
+            "scripts.quality_gate._update_comment", fake_update)
+        monkeypatch.setattr("scripts.quality_gate.add_comment", fake_add)
+        monkeypatch.setattr(
+            "scripts.quality_gate.markdown_to_adf", lambda md: {"md": md})
+
+        post_gate_comment("s", "u", "t", "RHAISTRAT-1", "body", existing_id="99")
+        assert calls == {"update": 1, "add": 1}
+
+    def test_other_http_errors_propagate(self, monkeypatch):
+        monkeypatch.setattr(
+            "scripts.quality_gate._update_comment",
+            lambda *_a, **_k: (_ for _ in ()).throw(_http_error(500)),
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.markdown_to_adf", lambda md: {"md": md})
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post_gate_comment(
+                "s", "u", "t", "RHAISTRAT-1", "body", existing_id="99")
+        assert exc.value.code == 500
+
+
+class TestWriteIssueGateResult:
+    def test_skipped_when_unchanged(self, monkeypatch):
+        results = [CheckResult("has_rice", False, "Missing fields: x")]
+        issue = {
+            "key": "RHAISTRAT-1",
+            "fields": {"labels": ["rp-qg1-fail"]},
+        }
+
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_verdict", lambda _r: "fail")
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_result_fingerprint",
+            lambda *_a, **_k: "abcd1234abcd1234",
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate._find_gate_comment",
+            lambda *_a, **_k: ("1", "QG1-FP: abcd1234abcd1234"),
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.should_skip_jira_write",
+            lambda *_a, **_k: True,
+        )
+
+        assert write_issue_gate_result(
+            "s", "u", "t", issue, results, LABEL_CONFIG) == "skipped"
+
+    def test_written_applies_label_and_comment(self, monkeypatch):
+        calls = []
+        results = [CheckResult("has_rice", True, "ok")]
+        issue = {
+            "key": "RHAISTRAT-1",
+            "fields": {"labels": []},
+        }
+
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_verdict", lambda _r: "pass")
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_result_fingerprint",
+            lambda *_a, **_k: "ffff0000ffff0000",
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate._find_gate_comment",
+            lambda *_a, **_k: (None, None),
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.should_skip_jira_write",
+            lambda *_a, **_k: False,
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.apply_verdict_label",
+            lambda *a, **k: calls.append(("label", a[3])),
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.build_gate_comment",
+            lambda *_a, **_k: "comment body",
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.post_gate_comment",
+            lambda *a, **k: calls.append(("comment", a[3])),
+        )
+
+        assert write_issue_gate_result(
+            "s", "u", "t", issue, results, LABEL_CONFIG) == "written"
+        assert calls == [("label", "RHAISTRAT-1"), ("comment", "RHAISTRAT-1")]
