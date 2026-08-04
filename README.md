@@ -120,9 +120,9 @@ Effort is relative complexity, not calendar time. E=13 is a red flag that the fe
 
 Labels are applied atomically: adding `rp-qg1-pass` removes `rp-qg1-fail` (and vice versa). Existing unrelated labels are untouched.
 
-On re-runs, the orchestrator still evaluates every candidate (so fixes can flip fail→pass automatically), but **skips Jira comment/label writes** when the check result fingerprint (`QG1-FP`) is unchanged and labels already match. That prevents daily comment churn on sticky failures.
+On re-runs, the orchestrator still evaluates every candidate (so fixes can flip fail→pass automatically), but **skips Jira comment/label writes** when the check result fingerprint (`QG1-FP`) on a **bot-authored** gate comment is unchanged and labels already match. Fingerprints from human/other-author comments are ignored for skip decisions. That prevents daily comment churn on sticky failures without letting stale non-bot text suppress writes.
 
-Batch runs write `artifacts/run-data.json` **before** applying labels/comments, isolate per-issue Jira write failures (one bad ticket cannot abort the rest), and fall back to posting a new gate comment when updating an existing one returns HTTP 400/403 (edit denied). Gate-comment updates only target comments authored by the authenticated bot — marker matches from humans/other bots are left alone and a new comment is added.
+Batch runs write `artifacts/run-data.json` **before** applying labels/comments, isolate per-issue Jira write failures (one bad ticket cannot abort the rest), and fall back to posting a new gate comment when updating an existing one returns HTTP 400/403 (edit denied). Gate-comment updates only target comments authored by the authenticated bot — marker matches from humans/other bots are left alone and a new comment is added. Comment lists are fetched once per issue and filtered in memory.
 
 ## Testing
 

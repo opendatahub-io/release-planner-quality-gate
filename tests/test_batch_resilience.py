@@ -91,6 +91,8 @@ class TestWriteIssueGateResult:
         }
 
         monkeypatch.setattr(
+            "scripts.jira_utils.get_comments", lambda *_a, **_k: [])
+        monkeypatch.setattr(
             "scripts.quality_gate.compute_verdict", lambda _r: "fail")
         monkeypatch.setattr(
             "scripts.quality_gate.compute_result_fingerprint",
@@ -116,6 +118,8 @@ class TestWriteIssueGateResult:
             "fields": {"labels": []},
         }
 
+        monkeypatch.setattr(
+            "scripts.jira_utils.get_comments", lambda *_a, **_k: [])
         monkeypatch.setattr(
             "scripts.quality_gate.compute_verdict", lambda _r: "pass")
         monkeypatch.setattr(
@@ -156,11 +160,8 @@ class TestWriteIssueGateResult:
         results = [CheckResult("has_rice", True, "ok")]
         issue = {"key": "RHAISTRAT-1", "fields": {"labels": []}}
 
-        def fake_find(*_a, **k):
-            if k.get("owned_by_self"):
-                return None, None
-            return ("17758731", f"{GATE_COMMENT_MARKER}\nQG1-FP: deadbeefdeadbeef")
-
+        monkeypatch.setattr(
+            "scripts.jira_utils.get_comments", lambda *_a, **_k: [{"id": "x"}])
         monkeypatch.setattr(
             "scripts.quality_gate.compute_verdict", lambda _r: "pass")
         monkeypatch.setattr(
@@ -168,7 +169,9 @@ class TestWriteIssueGateResult:
             lambda *_a, **_k: "cafe0000cafe0000",
         )
         monkeypatch.setattr(
-            "scripts.quality_gate._find_gate_comment", fake_find)
+            "scripts.quality_gate._find_gate_comment",
+            lambda *_a, **k: (None, None),
+        )
         monkeypatch.setattr(
             "scripts.quality_gate.should_skip_jira_write",
             lambda *_a, **_k: False,
@@ -189,10 +192,53 @@ class TestWriteIssueGateResult:
             "s", "u", "t", issue, results, LABEL_CONFIG) == "written"
         assert posted == {"key": "RHAISTRAT-1", "existing_id": None}
 
+    def test_human_fingerprint_does_not_skip(self, monkeypatch):
+        """Skip only when a bot-authored comment carries the matching FP."""
+        calls = {"find": 0, "get_comments": 0}
+        results = [CheckResult("has_rice", False, "Missing fields: x")]
+        issue = {
+            "key": "RHAISTRAT-499",
+            "fields": {"labels": ["rp-qg1-fail"]},
+        }
+        human_comments = [{"id": "17758731"}]
+
+        def fake_get_comments(*_a, **_k):
+            calls["get_comments"] += 1
+            return human_comments
+
+        def fake_find(*_a, **k):
+            calls["find"] += 1
+            assert k.get("comments") is human_comments
+            assert k.get("owned_by_self") is True
+            return None, None  # no bot-authored gate comment
+
+        monkeypatch.setattr(
+            "scripts.jira_utils.get_comments", fake_get_comments)
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_verdict", lambda _r: "fail")
+        monkeypatch.setattr(
+            "scripts.quality_gate.compute_result_fingerprint",
+            lambda *_a, **_k: "abcd1234abcd1234",
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate._find_gate_comment", fake_find)
+        monkeypatch.setattr(
+            "scripts.quality_gate.apply_verdict_label", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            "scripts.quality_gate.build_gate_comment",
+            lambda *_a, **_k: "body",
+        )
+        monkeypatch.setattr(
+            "scripts.quality_gate.post_gate_comment", lambda *_a, **_k: None)
+
+        assert write_issue_gate_result(
+            "s", "u", "t", issue, results, LABEL_CONFIG) == "written"
+        assert calls == {"find": 1, "get_comments": 1}
+
 
 class TestFindGateCommentOwnership:
     def test_skips_other_authors_when_owned_by_self(self, monkeypatch):
-        quality_gate._current_account_id = "bot-account"
+        monkeypatch.setattr(quality_gate, "_current_account_id", "bot-account")
 
         comments = [
             {
@@ -218,16 +264,18 @@ class TestFindGateCommentOwnership:
         )
 
         own_id, own_text = _find_gate_comment(
-            "s", "bot@redhat.com", "t", "RHAISTRAT-1", owned_by_self=True)
+            "s", "bot@redhat.com", "t", "RHAISTRAT-1",
+            owned_by_self=True, comments=comments)
         any_id, _ = _find_gate_comment(
-            "s", "bot@redhat.com", "t", "RHAISTRAT-1", owned_by_self=False)
+            "s", "bot@redhat.com", "t", "RHAISTRAT-1",
+            owned_by_self=False, comments=comments)
 
         assert own_id == "222"
         assert "bot" in own_text
         assert any_id == "222"
 
     def test_no_owned_comment_when_only_human_authored(self, monkeypatch):
-        quality_gate._current_account_id = "bot-account"
+        monkeypatch.setattr(quality_gate, "_current_account_id", "bot-account")
         comments = [
             {
                 "id": "17758731",
@@ -237,14 +285,11 @@ class TestFindGateCommentOwnership:
             },
         ]
         monkeypatch.setattr(
-            "scripts.jira_utils.get_comments",
-            lambda *_a, **_k: comments,
-        )
-        monkeypatch.setattr(
             "scripts.jira_utils.adf_to_markdown",
             lambda body: body if isinstance(body, str) else "",
         )
 
         own_id, own_text = _find_gate_comment(
-            "s", "bot@redhat.com", "t", "RHAISTRAT-499", owned_by_self=True)
+            "s", "bot@redhat.com", "t", "RHAISTRAT-499",
+            owned_by_self=True, comments=comments)
         assert own_id is None and own_text is None

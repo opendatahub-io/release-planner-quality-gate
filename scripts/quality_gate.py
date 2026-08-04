@@ -297,17 +297,24 @@ def _comment_authored_by_current_user(comment, server, user, token):
     return bool(email and email == (user or "").lower())
 
 
-def _find_gate_comment(server, user, token, issue_key, owned_by_self=False):
+_UNSET = object()
+
+
+def _find_gate_comment(server, user, token, issue_key, owned_by_self=False,
+                       comments=None):
     """Find an existing gate comment (latest match).
 
     When owned_by_self is True, only comments authored by the authenticated
     user are considered — required because Jira rejects edits to other users'
     comments even when they contain the gate marker.
 
+    Pass comments= to reuse a single get_comments() fetch across filters.
+
     Returns (comment_id, markdown_text) or (None, None).
     """
     from scripts.jira_utils import get_comments, adf_to_markdown
-    comments = get_comments(server, user, token, issue_key)
+    if comments is None:
+        comments = get_comments(server, user, token, issue_key)
     matches = []
     for comment in comments:
         body = comment.get("body", {})
@@ -332,15 +339,18 @@ def _update_comment(server, user, token, issue_key, comment_id, body_adf):
 
 
 def post_gate_comment(server, user, token, issue_key, comment_md,
-                      existing_id=None):
+                      existing_id=_UNSET):
     """Post or update the gate result comment on Jira.
 
     Only updates comments authored by the authenticated user. Marker-matching
     comments from humans/other bots are left alone and a new comment is added.
     If an owned-comment update still fails with 400/403, fall back to add.
+
+    Pass existing_id=None when the caller already confirmed there is no
+    bot-authored gate comment (avoids a redundant comment-list fetch).
     """
     comment_adf = markdown_to_adf(comment_md)
-    if existing_id is None:
+    if existing_id is _UNSET:
         existing_id, _ = _find_gate_comment(
             server, user, token, issue_key, owned_by_self=True)
     if existing_id:
@@ -365,16 +375,17 @@ def write_issue_gate_result(server, user, token, issue, results, label_config):
 
     Returns "skipped" when fingerprint/labels are unchanged, else "written".
     """
+    from scripts.jira_utils import get_comments
+
     key = issue["key"]
     verdict = compute_verdict(results)
     current_labels = issue.get("fields", {}).get("labels", [])
     new_fp = compute_result_fingerprint(results, verdict)
-    # Fingerprint may come from any gate comment; updates only target our own.
+    # One comment-list fetch; only trust fingerprints from bot-authored comments.
+    comments = get_comments(server, user, token, key)
     own_id, own_text = _find_gate_comment(
-        server, user, token, key, owned_by_self=True)
-    _, any_text = _find_gate_comment(
-        server, user, token, key, owned_by_self=False)
-    existing_fp = extract_fingerprint(own_text or any_text)
+        server, user, token, key, owned_by_self=True, comments=comments)
+    existing_fp = extract_fingerprint(own_text)
     if should_skip_jira_write(
             existing_fp, new_fp, current_labels, verdict, label_config):
         return "skipped"
