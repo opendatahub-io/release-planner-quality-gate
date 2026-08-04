@@ -143,6 +143,36 @@ class TestFieldPresentCheck:
         result = checks[0].evaluate(issue)
         assert not result.passed
 
+    def test_empty_dict_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": {}}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_user_picker_requires_account_id(self):
+        """Assignee / Product Manager must have a non-empty accountId."""
+        for field in ("assignee", "customfield_10469"):
+            checks = instantiate_checks([self._make_config([field])])
+            issue = {"fields": {field: {"displayName": "Someone"}}}
+            result = checks[0].evaluate(issue)
+            assert not result.passed, f"{field} without accountId should fail"
+
+            issue = {"fields": {field: {
+                "displayName": "Someone",
+                "accountId": "",
+            }}}
+            result = checks[0].evaluate(issue)
+            assert not result.passed, f"{field} with blank accountId should fail"
+
+            issue = {"fields": {field: {
+                "displayName": "Someone",
+                "accountId": "abc123",
+            }}}
+            result = checks[0].evaluate(issue)
+            assert result.passed, f"{field} with accountId should pass"
+
     def test_zero_is_present(self):
         """Zero is a valid value (e.g., a score of 0)."""
         checks = instantiate_checks([

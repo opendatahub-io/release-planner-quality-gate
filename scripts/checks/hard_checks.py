@@ -2,16 +2,20 @@
 from scripts.checks import BaseCheck, CheckResult, register_check
 
 INVALID_VALUES = {"Undefined", "None", "N/A"}
+# Jira user-picker fields used by FPDoR Phase 1 checks.
+USER_PICKER_FIELDS = {"assignee", "customfield_10469"}
 
 
-def _field_missing(val) -> bool:
+def _field_missing(val, *, requires_account_id=False) -> bool:
     """True when a Jira field value should be treated as unset."""
-    if val is None or val == "" or val == []:
+    if val is None or val == "" or val == [] or val == {}:
         return True
     if isinstance(val, dict):
         if val.get("name") in INVALID_VALUES or val.get("value") in INVALID_VALUES:
             return True
-        # User-picker fields (assignee, Product Manager) need an accountId.
+        if requires_account_id:
+            return not bool(val.get("accountId"))
+        # Blank accountId on any user-shaped object is still missing.
         if "accountId" in val and not val.get("accountId"):
             return True
     return False
@@ -24,7 +28,13 @@ class FieldPresentCheck(BaseCheck):
     def evaluate(self, issue: dict) -> CheckResult:
         fields = self.config.get("fields", [])
         issue_fields = issue.get("fields", {})
-        missing = [f for f in fields if _field_missing(issue_fields.get(f))]
+        missing = [
+            f for f in fields
+            if _field_missing(
+                issue_fields.get(f),
+                requires_account_id=f in USER_PICKER_FIELDS,
+            )
+        ]
 
         if not missing:
             return CheckResult(

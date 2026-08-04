@@ -84,7 +84,7 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_rubric_pass` | `label_present` | Has `strat-creator-rubric-pass` label (not implied by sign-off) | No |
 | `has_components` | `field_present` | At least one component assigned | No |
 | `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
-| `has_docs_impact` | `docs_impact` | Product Documentation Required set; if Yes, `Documentation` component assigned | No |
+| `has_docs_impact` | `docs_impact` | Product Documentation Required is set; if Yes, `Documentation` component assigned | No |
 | `has_target_version` | `field_present` | Target Version (`customfield_10855`) is set | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
