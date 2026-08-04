@@ -186,7 +186,19 @@ def _friendly_fail_details(details):
     return result
 
 
-def build_gate_comment(issue, check_results, verdict, label_config):
+def compute_checks_version(hard_checks_config):
+    """Stable short hash of the configured hard-check set.
+
+    Changing check names, types, or parameters invalidates stored
+    fingerprints so prior pass/fail labels are revalidated.
+    """
+    payload = json.dumps(
+        hard_checks_config or [], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def build_gate_comment(issue, check_results, verdict, label_config,
+                       checks_version=""):
     """Build a deterministic gate result comment in markdown."""
     status = "PASS" if verdict == "pass" else "FAIL"
     label = label_config["gate_pass"] if verdict == "pass" else label_config["gate_fail"]
@@ -221,7 +233,9 @@ def build_gate_comment(issue, check_results, verdict, label_config):
 
     lines.append("")
     lines.append(f"Label applied: {label}")
-    lines.append(f"QG1-FP: {compute_result_fingerprint(check_results, verdict)}")
+    lines.append(
+        f"QG1-FP: {compute_result_fingerprint(check_results, verdict, checks_version)}"
+    )
 
     if verdict == "fail":
         lines.append("")
@@ -239,9 +253,14 @@ GATE_COMMENT_MARKER = "Release Quality Gate 1: Feature Definition of Ready for P
 FINGERPRINT_RE = re.compile(r"QG1-FP:\s*([a-f0-9]{16,64})", re.IGNORECASE)
 
 
-def compute_result_fingerprint(check_results, verdict):
-    """Stable hash of verdict + per-check outcomes for change detection."""
+def compute_result_fingerprint(check_results, verdict, checks_version=""):
+    """Stable hash of checks version + verdict + per-check outcomes.
+
+    checks_version must change when hard-check criteria change so prior
+    gate comments no longer match and stale pass/fail labels are rewritten.
+    """
     data = {
+        "checks_version": checks_version or "",
         "verdict": verdict,
         "checks": [
             {
@@ -370,7 +389,8 @@ def post_gate_comment(server, user, token, issue_key, comment_md,
         add_comment(server, user, token, issue_key, comment_adf)
 
 
-def write_issue_gate_result(server, user, token, issue, results, label_config):
+def write_issue_gate_result(server, user, token, issue, results, label_config,
+                            checks_version=""):
     """Apply labels + gate comment for one issue.
 
     Returns "skipped" when fingerprint/labels are unchanged, else "written".
@@ -380,7 +400,7 @@ def write_issue_gate_result(server, user, token, issue, results, label_config):
     key = issue["key"]
     verdict = compute_verdict(results)
     current_labels = issue.get("fields", {}).get("labels", [])
-    new_fp = compute_result_fingerprint(results, verdict)
+    new_fp = compute_result_fingerprint(results, verdict, checks_version)
     # One comment-list fetch; only trust fingerprints from bot-authored comments.
     comments = get_comments(server, user, token, key)
     own_id, own_text = _find_gate_comment(
@@ -392,7 +412,7 @@ def write_issue_gate_result(server, user, token, issue, results, label_config):
     apply_verdict_label(
         server, user, token, key, current_labels, verdict, label_config)
     comment_md = build_gate_comment(
-        issue, results, verdict, label_config)
+        issue, results, verdict, label_config, checks_version=checks_version)
     post_gate_comment(
         server, user, token, key, comment_md, existing_id=own_id)
     return "written"
@@ -569,13 +589,16 @@ def main(argv=None):
     # Isolate per-issue failures so one HTTP error cannot abort the batch.
     if not args.dry_run:
         label_config = config["labels"]
+        checks_version = compute_checks_version(
+            config.get("checks", {}).get("hard_checks", []))
         for issue in issues:
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
             try:
                 outcome = write_issue_gate_result(
-                    server, user, token, issue, results, label_config)
+                    server, user, token, issue, results, label_config,
+                    checks_version=checks_version)
                 if outcome == "skipped":
                     print(f"  {key}: {verdict.upper()}"
                           f" (unchanged, skip write)")

@@ -89,6 +89,14 @@ class TestLoadConfig:
         assert labels["gate_fail"] == "rp-qg1-fail"
         assert labels["auto_rice"] == "rp-qg1-auto-rice"
 
+    def test_discovery_does_not_skip_prior_passes(self):
+        """rp-qg1-pass must stay in scope so criteria changes revalidate."""
+        config = load_config()
+        skip = config["jql"].get("skip_labels") or []
+        assert "rp-qg1-pass" not in skip
+        jql = build_jql(config)
+        assert 'labels != "rp-qg1-pass"' not in jql
+
 
 # --- collect_required_fields ---
 
