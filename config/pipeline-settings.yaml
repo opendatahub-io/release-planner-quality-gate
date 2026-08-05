@@ -8,8 +8,10 @@ jql:
   excluded_statuses:
     - Closed
     - Resolved
-  skip_labels:
-    - rp-qg1-pass
+  # Do not list rp-qg1-pass here. Prior passes must be re-evaluated when
+  # hard-check criteria change; fingerprint skip avoids redundant Jira writes.
+  # Optional opt-out labels (e.g. rp-qg1-skip) may be listed if needed.
+  skip_labels: []
   order_by: key ASC
 
 # RICE custom field IDs (Jira Prioritization tab)

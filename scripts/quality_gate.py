@@ -3,9 +3,12 @@
 Main orchestrator: discovers issues, evaluates checks, manages labels.
 """
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
+import urllib.error
 from datetime import datetime, timezone
 
 import yaml
@@ -204,7 +207,19 @@ def _friendly_fail_details(details):
     return result
 
 
-def build_gate_comment(issue, check_results, verdict, label_config):
+def compute_checks_version(hard_checks_config):
+    """Stable short hash of the configured hard-check set.
+
+    Changing check names, types, or parameters invalidates stored
+    fingerprints so prior pass/fail labels are revalidated.
+    """
+    payload = json.dumps(
+        hard_checks_config or [], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def build_gate_comment(issue, check_results, verdict, label_config,
+                       checks_version=""):
     """Build a deterministic gate result comment in markdown."""
     status = "PASS" if verdict == "pass" else "FAIL"
     label = label_config["gate_pass"] if verdict == "pass" else label_config["gate_fail"]
@@ -239,32 +254,126 @@ def build_gate_comment(issue, check_results, verdict, label_config):
 
     lines.append("")
     lines.append(f"Label applied: {label}")
+    lines.append(
+        f"QG1-FP: {compute_result_fingerprint(check_results, verdict, checks_version)}"
+    )
 
     if verdict == "fail":
-        fail_label = label_config["gate_fail"]
         lines.append("")
         lines.append(
-            f"To resolve: fix the failing checks above in Jira, then "
-            f"remove the **{fail_label}** label. The next pipeline run "
-            f"will re-evaluate this feature automatically."
+            "To resolve: fix the failing checks above in Jira. "
+            "The next pipeline run will re-evaluate automatically and "
+            "update this comment and labels only if the result changes or "
+            "the gate labels don't match yet."
         )
 
     return "\n".join(lines)
 
 
 GATE_COMMENT_MARKER = "Release Quality Gate 1: Feature Definition of Ready for Planning"
+FINGERPRINT_RE = re.compile(r"QG1-FP:\s*([a-f0-9]{16,64})", re.IGNORECASE)
 
 
-def _find_gate_comment(server, user, token, issue_key):
-    """Find an existing gate comment by looking for the marker text."""
+def compute_result_fingerprint(check_results, verdict, checks_version=""):
+    """Stable hash of checks version + verdict + per-check outcomes.
+
+    checks_version must change when hard-check criteria change so prior
+    gate comments no longer match and stale pass/fail labels are rewritten.
+    """
+    data = {
+        "checks_version": checks_version or "",
+        "verdict": verdict,
+        "checks": [
+            {
+                "name": r.name,
+                "status": "pass" if r.passed else "fail",
+                "detail": "ok" if r.passed else _friendly_fail_details(r.details),
+            }
+            for r in check_results
+        ],
+    }
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def extract_fingerprint(comment_text):
+    """Pull QG1-FP hash from a gate comment body, if present.
+
+    Returns None when missing, malformed, or ambiguous (multiple QG1-FP
+    tokens) so should_skip_jira_write() forces a rewrite.
+    """
+    matches = FINGERPRINT_RE.findall(comment_text or "")
+    if len(matches) != 1:
+        return None
+    return matches[0].lower()
+
+
+def labels_match_verdict(current_labels, verdict, label_config):
+    """True when pass/fail labels already match the verdict (no swap needed)."""
+    pass_label = label_config["gate_pass"]
+    fail_label = label_config["gate_fail"]
+    labels = current_labels or []
+    if verdict == "pass":
+        return pass_label in labels and fail_label not in labels
+    return fail_label in labels and pass_label not in labels
+
+
+_current_account_id = None
+
+
+def _get_current_account_id(server, user, token):
+    """Resolve the authenticated Jira accountId (cached for the process)."""
+    global _current_account_id
+    if _current_account_id is not None:
+        return _current_account_id
+    from scripts.jira_utils import api_call_with_retry
+    me = api_call_with_retry(server, "/myself", user, token)
+    _current_account_id = (me or {}).get("accountId")
+    return _current_account_id
+
+
+def _comment_authored_by_current_user(comment, server, user, token):
+    """True when the comment author is the authenticated API user."""
+    author = comment.get("author") or {}
+    account_id = _get_current_account_id(server, user, token)
+    if account_id and author.get("accountId") == account_id:
+        return True
+    # Fallback for environments where /myself is unavailable in tests.
+    email = (author.get("emailAddress") or "").lower()
+    return bool(email and email == (user or "").lower())
+
+
+_UNSET = object()
+
+
+def _find_gate_comment(server, user, token, issue_key, owned_by_self=False,
+                       comments=None):
+    """Find an existing gate comment (latest match).
+
+    When owned_by_self is True, only comments authored by the authenticated
+    user are considered — required because Jira rejects edits to other users'
+    comments even when they contain the gate marker.
+
+    Pass comments= to reuse a single get_comments() fetch across filters.
+
+    Returns (comment_id, markdown_text) or (None, None).
+    """
     from scripts.jira_utils import get_comments, adf_to_markdown
-    comments = get_comments(server, user, token, issue_key)
+    if comments is None:
+        comments = get_comments(server, user, token, issue_key)
+    matches = []
     for comment in comments:
         body = comment.get("body", {})
         text = adf_to_markdown(body) if isinstance(body, dict) else str(body)
-        if GATE_COMMENT_MARKER in text:
-            return comment.get("id")
-    return None
+        if GATE_COMMENT_MARKER not in text:
+            continue
+        if owned_by_self and not _comment_authored_by_current_user(
+                comment, server, user, token):
+            continue
+        matches.append((comment.get("id"), text))
+    if not matches:
+        return None, None
+    return matches[-1]
 
 
 def _update_comment(server, user, token, issue_key, comment_id, body_adf):
@@ -275,15 +384,75 @@ def _update_comment(server, user, token, issue_key, comment_id, body_adf):
                                body={"body": body_adf}, method="PUT")
 
 
-def post_gate_comment(server, user, token, issue_key, comment_md):
-    """Post or update the gate result comment on Jira."""
+def post_gate_comment(server, user, token, issue_key, comment_md,
+                      existing_id=_UNSET):
+    """Post or update the gate result comment on Jira.
+
+    Only updates comments authored by the authenticated user. Marker-matching
+    comments from humans/other bots are left alone and a new comment is added.
+    If an owned-comment update still fails with 400/403, fall back to add.
+
+    Pass existing_id=None when the caller already confirmed there is no
+    bot-authored gate comment (avoids a redundant comment-list fetch).
+    """
     comment_adf = markdown_to_adf(comment_md)
-    existing_id = _find_gate_comment(server, user, token, issue_key)
+    if existing_id is _UNSET:
+        existing_id, _ = _find_gate_comment(
+            server, user, token, issue_key, owned_by_self=True)
     if existing_id:
-        _update_comment(server, user, token, issue_key, existing_id,
-                        comment_adf)
+        try:
+            _update_comment(server, user, token, issue_key, existing_id,
+                            comment_adf)
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 403):
+                raise
+            print(
+                f"  {issue_key}: cannot edit comment {existing_id} "
+                f"(HTTP {e.code}); posting a new comment instead",
+                file=sys.stderr,
+            )
+            add_comment(server, user, token, issue_key, comment_adf)
     else:
         add_comment(server, user, token, issue_key, comment_adf)
+
+
+def write_issue_gate_result(server, user, token, issue, results, label_config,
+                            checks_version=""):
+    """Apply labels + gate comment for one issue.
+
+    Returns "skipped" when fingerprint/labels are unchanged, else "written".
+    """
+    from scripts.jira_utils import get_comments
+
+    key = issue["key"]
+    verdict = compute_verdict(results)
+    current_labels = issue.get("fields", {}).get("labels", [])
+    new_fp = compute_result_fingerprint(results, verdict, checks_version)
+    # One comment-list fetch; only trust fingerprints from bot-authored comments.
+    comments = get_comments(server, user, token, key)
+    own_id, own_text = _find_gate_comment(
+        server, user, token, key, owned_by_self=True, comments=comments)
+    existing_fp = extract_fingerprint(own_text)
+    if should_skip_jira_write(
+            existing_fp, new_fp, current_labels, verdict, label_config):
+        return "skipped"
+    apply_verdict_label(
+        server, user, token, key, current_labels, verdict, label_config)
+    comment_md = build_gate_comment(
+        issue, results, verdict, label_config, checks_version=checks_version)
+    post_gate_comment(
+        server, user, token, key, comment_md, existing_id=own_id)
+    return "written"
+
+
+def should_skip_jira_write(existing_fingerprint, new_fingerprint,
+                           current_labels, verdict, label_config):
+    """Skip comment/label writes when result fingerprint and labels are unchanged."""
+    if not existing_fingerprint:
+        return False
+    if existing_fingerprint.lower() != new_fingerprint.lower():
+        return False
+    return labels_match_verdict(current_labels, verdict, label_config)
 
 
 def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
@@ -413,16 +582,27 @@ def main(argv=None):
         print(f"\nGenerating RICE for {len(needs_rice)} issue(s)...")
         rice_result = generate_rice_scores(needs_rice, timeout=timeout)
 
+        rice_written = []
         for rec in rice_result.succeeded:
             rice_generated[rec.ticket] = rec
-            if not args.dry_run:
+            if args.dry_run:
+                continue
+            try:
                 print(f"  Writing RICE to Jira for {rec.ticket}...")
                 write_rice_to_jira(rec, server, user, token)
+                rice_written.append(rec)
+            except Exception as exc:
+                # Isolate per-ticket failures so one RICE write cannot abort
+                # the run before artifacts / gate labels are produced.
+                print(
+                    f"  {rec.ticket}: RICE write failed: {exc}",
+                    file=sys.stderr,
+                )
 
         # Re-fetch and re-evaluate issues that got RICE written
-        if not args.dry_run and rice_result.succeeded:
-            print(f"\nRe-evaluating {len(rice_result.succeeded)} RICE'd issues...")
-            for rec in rice_result.succeeded:
+        if rice_written:
+            print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
+            for rec in rice_written:
                 issue = get_issue(server, user, token, rec.ticket,
                                  fields=fields)
                 results_by_issue[rec.ticket] = evaluate_issue(issue, checks)
@@ -432,21 +612,40 @@ def main(argv=None):
                         issues[i] = issue
                         break
 
-    # Apply verdict labels and post gate comment (full run only)
+    print_summary(results_by_issue)
+
+    # Emit artifacts before gate label/comment writes so CI still gets
+    # run-data.json if a later write crashes the process. RICE writes above
+    # are also isolated per ticket for the same reason.
+    run_data = build_run_data(
+        results_by_issue, config, args.dry_run, mode, args.issue)
+    artifact_path = write_artifacts(run_data)
+    print(f"Artifacts written to {artifact_path}")
+
+    # Apply verdict labels and post gate comment (full run only).
+    # Skip Jira writes when the result fingerprint is unchanged and labels
+    # already match — avoids daily comment churn on sticky fails.
+    # Isolate per-issue failures so one HTTP error cannot abort the batch.
     if not args.dry_run:
         label_config = config["labels"]
+        checks_version = compute_checks_version(
+            config.get("checks", {}).get("hard_checks", []))
         for issue in issues:
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
-            current_labels = issue.get("fields", {}).get("labels", [])
-            apply_verdict_label(
-                server, user, token, key, current_labels,
-                verdict, label_config)
-            comment_md = build_gate_comment(
-                issue, results, verdict, label_config)
-            post_gate_comment(server, user, token, key, comment_md)
-            print(f"  {key}: {verdict.upper()} → label + comment applied")
+            try:
+                outcome = write_issue_gate_result(
+                    server, user, token, issue, results, label_config,
+                    checks_version=checks_version)
+                if outcome == "skipped":
+                    print(f"  {key}: {verdict.upper()}"
+                          f" (unchanged, skip write)")
+                else:
+                    print(f"  {key}: {verdict.upper()}"
+                          f" → label + comment applied")
+            except Exception as exc:
+                print(f"  {key}: Jira write failed: {exc}", file=sys.stderr)
     else:
         for key, results in results_by_issue.items():
             verdict = compute_verdict(results)
@@ -458,13 +657,6 @@ def main(argv=None):
                              f" → {rec.expected_rice}")
             print(f"  {key}: {verdict.upper()}"
                   f" (dry-run, no Jira writes){rice_note}")
-
-    print_summary(results_by_issue)
-
-    run_data = build_run_data(
-        results_by_issue, config, args.dry_run, mode, args.issue)
-    artifact_path = write_artifacts(run_data)
-    print(f"Artifacts written to {artifact_path}")
 
 
 if __name__ == "__main__":
