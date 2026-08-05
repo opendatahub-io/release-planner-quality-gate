@@ -89,7 +89,6 @@ class TestLoadConfig:
         assert labels["gate_fail"] == "rp-qg1-fail"
         assert labels["auto_rice"] == "rp-qg1-auto-rice"
 
-<<<<<<< HEAD
     def test_fpdor_phase1_checks_configured(self):
         config = load_config()
         names = {c["name"]: c["type"] for c in config["checks"]["hard_checks"]}
@@ -98,7 +97,7 @@ class TestLoadConfig:
         assert names["has_rubric_pass"] == "label_present"
         assert names["has_docs_impact"] == "docs_impact"
         assert "has_docs_required" not in names
-=======
+
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
         config = load_config()
@@ -106,7 +105,6 @@ class TestLoadConfig:
         assert "rp-qg1-pass" not in skip
         jql = build_jql(config)
         assert 'labels != "rp-qg1-pass"' not in jql
->>>>>>> origin/main
 
 
 # --- collect_required_fields ---
