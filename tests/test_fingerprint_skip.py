@@ -40,11 +40,24 @@ class TestFingerprint:
         assert len(a) == 16
 
     def test_changes_when_check_flips(self):
-        fail_fp = compute_result_fingerprint(
+        """Same verdict; only a per-check outcome changes."""
+        old_fp = compute_result_fingerprint(
             _results(fail_docs=True), "fail", "v1")
-        pass_fp = compute_result_fingerprint(
-            _results(fail_docs=False), "pass", "v1")
-        assert fail_fp != pass_fp
+        new_results = _results(fail_docs=True)
+        new_results[-1] = CheckResult(
+            "has_target_version", False,
+            "Missing fields: customfield_10855",
+        )
+        new_fp = compute_result_fingerprint(new_results, "fail", "v1")
+        assert old_fp != new_fp
+
+    def test_changes_when_verdict_changes(self):
+        """Identical check payload; only the verdict changes."""
+        results = _results(fail_docs=False)
+        assert (
+            compute_result_fingerprint(results, "pass", "v1")
+            != compute_result_fingerprint(results, "fail", "v1")
+        )
 
     def test_changes_when_checks_version_changes(self):
         """Criteria bumps (Phase 1/2/…) must invalidate prior fingerprints."""
@@ -63,6 +76,13 @@ class TestFingerprint:
         assert extract_fingerprint(md) == fp
         assert "only if the result changes or the gate labels don't match yet" in md
         assert "only if the result changes." not in md
+
+    def test_ambiguous_fingerprint_forces_rewrite(self):
+        """Multiple QG1-FP tokens must not be trusted for skip."""
+        assert extract_fingerprint(
+            "QG1-FP: 1111111111111111\nQG1-FP: 2222222222222222"
+        ) is None
+        assert extract_fingerprint("no fingerprint here") is None
 
 
 class TestChecksVersion:
@@ -111,8 +131,9 @@ class TestShouldSkipJiraWrite:
 
     def test_labels_match_helpers(self):
         assert labels_match_verdict(
-            ["rp-qg1-pass"], "pass", LABEL_CONFIG) is True
+            ["existing-label", "rp-qg1-pass"], "pass", LABEL_CONFIG) is True
         assert labels_match_verdict(
-            ["rp-qg1-fail"], "fail", LABEL_CONFIG) is True
+            ["existing-label", "rp-qg1-fail"], "fail", LABEL_CONFIG) is True
         assert labels_match_verdict(
-            ["rp-qg1-pass", "rp-qg1-fail"], "pass", LABEL_CONFIG) is False
+            ["existing-label", "rp-qg1-pass", "rp-qg1-fail"],
+            "pass", LABEL_CONFIG) is False

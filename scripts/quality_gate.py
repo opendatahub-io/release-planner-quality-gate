@@ -276,9 +276,15 @@ def compute_result_fingerprint(check_results, verdict, checks_version=""):
 
 
 def extract_fingerprint(comment_text):
-    """Pull QG1-FP hash from a gate comment body, if present."""
-    match = FINGERPRINT_RE.search(comment_text or "")
-    return match.group(1).lower() if match else None
+    """Pull QG1-FP hash from a gate comment body, if present.
+
+    Returns None when missing, malformed, or ambiguous (multiple QG1-FP
+    tokens) so should_skip_jira_write() forces a rewrite.
+    """
+    matches = FINGERPRINT_RE.findall(comment_text or "")
+    if len(matches) != 1:
+        return None
+    return matches[0].lower()
 
 
 def labels_match_verdict(current_labels, verdict, label_config):
@@ -555,16 +561,27 @@ def main(argv=None):
         print(f"\nGenerating RICE for {len(needs_rice)} issue(s)...")
         rice_result = generate_rice_scores(needs_rice, timeout=timeout)
 
+        rice_written = []
         for rec in rice_result.succeeded:
             rice_generated[rec.ticket] = rec
-            if not args.dry_run:
+            if args.dry_run:
+                continue
+            try:
                 print(f"  Writing RICE to Jira for {rec.ticket}...")
                 write_rice_to_jira(rec, server, user, token)
+                rice_written.append(rec)
+            except Exception as exc:
+                # Isolate per-ticket failures so one RICE write cannot abort
+                # the run before artifacts / gate labels are produced.
+                print(
+                    f"  {rec.ticket}: RICE write failed: {exc}",
+                    file=sys.stderr,
+                )
 
         # Re-fetch and re-evaluate issues that got RICE written
-        if not args.dry_run and rice_result.succeeded:
-            print(f"\nRe-evaluating {len(rice_result.succeeded)} RICE'd issues...")
-            for rec in rice_result.succeeded:
+        if rice_written:
+            print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
+            for rec in rice_written:
                 issue = get_issue(server, user, token, rec.ticket,
                                  fields=fields)
                 results_by_issue[rec.ticket] = evaluate_issue(issue, checks)
@@ -576,8 +593,9 @@ def main(argv=None):
 
     print_summary(results_by_issue)
 
-    # Emit artifacts before Jira writes so CI still gets run-data.json if a
-    # later comment/label write crashes the process.
+    # Emit artifacts before gate label/comment writes so CI still gets
+    # run-data.json if a later write crashes the process. RICE writes above
+    # are also isolated per ticket for the same reason.
     run_data = build_run_data(
         results_by_issue, config, args.dry_run, mode, args.issue)
     artifact_path = write_artifacts(run_data)
