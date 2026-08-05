@@ -1,4 +1,5 @@
 # Release Quality Gate 1: Feature Definition of Ready for Planning
+# Aligns to FPDoR: https://redhat.atlassian.net/wiki/spaces/RHAI/pages/442958832
 # JQL query configuration for issue discovery
 jql:
   project: RHAISTRAT
@@ -50,10 +51,25 @@ checks:
       fields:
         - priority
 
+    - name: has_pm
+      type: field_present
+      fields:
+        - customfield_10469   # Product Manager
+
+    - name: has_delivery_owner
+      type: field_present
+      fields:
+        - assignee             # Delivery Owner (FPDoR)
+
     - name: has_sign_off
       type: label_present
       labels:
         - strat-creator-human-sign-off
+
+    - name: has_rubric_pass
+      type: label_present
+      labels:
+        - strat-creator-rubric-pass
 
     - name: has_components
       type: field_present
@@ -65,10 +81,10 @@ checks:
       fields:
         - customfield_10851   # Release Type
 
-    - name: has_docs_required
-      type: field_present
-      fields:
-        - customfield_10665   # Product Documentation Required
+    - name: has_docs_impact
+      type: docs_impact
+      docs_required_field: customfield_10665   # Product Documentation Required
+      documentation_component: Documentation
 
     - name: has_target_version
       type: field_present

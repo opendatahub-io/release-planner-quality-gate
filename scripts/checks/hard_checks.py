@@ -1,7 +1,24 @@
-"""Hard check implementations: field_present, label_present."""
+"""Hard check implementations: field_present, label_present, docs_impact."""
 from scripts.checks import BaseCheck, CheckResult, register_check
 
 INVALID_VALUES = {"Undefined", "None", "N/A"}
+# Jira user-picker fields used by FPDoR Phase 1 checks.
+USER_PICKER_FIELDS = {"assignee", "customfield_10469"}
+
+
+def _field_missing(val, *, requires_account_id=False) -> bool:
+    """True when a Jira field value should be treated as unset."""
+    if val is None or val == "" or val == [] or val == {}:
+        return True
+    if isinstance(val, dict):
+        if val.get("name") in INVALID_VALUES or val.get("value") in INVALID_VALUES:
+            return True
+        if requires_account_id:
+            return not bool(val.get("accountId"))
+        # Blank accountId on any user-shaped object is still missing.
+        if "accountId" in val and not val.get("accountId"):
+            return True
+    return False
 
 
 @register_check("field_present")
@@ -11,15 +28,13 @@ class FieldPresentCheck(BaseCheck):
     def evaluate(self, issue: dict) -> CheckResult:
         fields = self.config.get("fields", [])
         issue_fields = issue.get("fields", {})
-        missing = []
-        for f in fields:
-            val = issue_fields.get(f)
-            if val is None or val == "" or val == []:
-                missing.append(f)
-            elif isinstance(val, dict) and val.get("name") in INVALID_VALUES:
-                missing.append(f)
-            elif isinstance(val, dict) and val.get("value") in INVALID_VALUES:
-                missing.append(f)
+        missing = [
+            f for f in fields
+            if _field_missing(
+                issue_fields.get(f),
+                requires_account_id=f in USER_PICKER_FIELDS,
+            )
+        ]
 
         if not missing:
             return CheckResult(
@@ -57,4 +72,65 @@ class LabelPresentCheck(BaseCheck):
             name=self.name,
             passed=False,
             details=f"Missing labels: {', '.join(sorted(missing))}",
+        )
+
+
+@register_check("docs_impact")
+class DocsImpactCheck(BaseCheck):
+    """FPDoR docs impact: Docs Required set; if Yes, Documentation component set."""
+
+    def evaluate(self, issue: dict) -> CheckResult:
+        docs_field = self.config.get(
+            "docs_required_field", "customfield_10665")
+        docs_component = self.config.get(
+            "documentation_component", "Documentation")
+        issue_fields = issue.get("fields", {})
+        docs_val = issue_fields.get(docs_field)
+
+        if _field_missing(docs_val):
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                details=f"Missing fields: {docs_field}",
+            )
+
+        value = docs_val.get("value") if isinstance(docs_val, dict) else docs_val
+        if value not in ("Yes", "No"):
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                details=(
+                    f"Product Documentation Required must be Yes or No "
+                    f"(got {value!r})"
+                ),
+            )
+
+        if value == "No":
+            return CheckResult(
+                name=self.name,
+                passed=True,
+                details="Product Documentation Required = No",
+            )
+
+        components = issue_fields.get("components") or []
+        names = {
+            c.get("name") for c in components
+            if isinstance(c, dict) and c.get("name")
+        }
+        if docs_component in names:
+            return CheckResult(
+                name=self.name,
+                passed=True,
+                details=(
+                    f"Product Documentation Required = Yes; "
+                    f"{docs_component} component present"
+                ),
+            )
+        return CheckResult(
+            name=self.name,
+            passed=False,
+            details=(
+                f"Product Documentation Required = Yes but "
+                f"{docs_component} component is not assigned"
+            ),
         )

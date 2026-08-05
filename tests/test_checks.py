@@ -143,6 +143,36 @@ class TestFieldPresentCheck:
         result = checks[0].evaluate(issue)
         assert not result.passed
 
+    def test_empty_dict_counts_as_missing(self):
+        checks = instantiate_checks([
+            self._make_config(["priority"]),
+        ])
+        issue = {"fields": {"priority": {}}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+
+    def test_user_picker_requires_account_id(self):
+        """Assignee / Product Manager must have a non-empty accountId."""
+        for field in ("assignee", "customfield_10469"):
+            checks = instantiate_checks([self._make_config([field])])
+            issue = {"fields": {field: {"displayName": "Someone"}}}
+            result = checks[0].evaluate(issue)
+            assert not result.passed, f"{field} without accountId should fail"
+
+            issue = {"fields": {field: {
+                "displayName": "Someone",
+                "accountId": "",
+            }}}
+            result = checks[0].evaluate(issue)
+            assert not result.passed, f"{field} with blank accountId should fail"
+
+            issue = {"fields": {field: {
+                "displayName": "Someone",
+                "accountId": "abc123",
+            }}}
+            result = checks[0].evaluate(issue)
+            assert result.passed, f"{field} with accountId should pass"
+
     def test_zero_is_present(self):
         """Zero is a valid value (e.g., a score of 0)."""
         checks = instantiate_checks([
@@ -309,13 +339,52 @@ class TestNewHardChecks:
         issue = {"fields": {}}
         assert not checks[0].evaluate(issue).passed
 
-    def test_docs_required_present(self):
+    def test_docs_impact_yes_with_documentation_component(self):
         checks = instantiate_checks([
-            {"name": "has_docs_required", "type": "field_present",
-             "fields": ["customfield_10665"]},
+            {"name": "has_docs_impact", "type": "docs_impact",
+             "docs_required_field": "customfield_10665",
+             "documentation_component": "Documentation"},
         ])
-        issue = {"fields": {"customfield_10665": {"value": "Yes"}}}
+        issue = {"fields": {
+            "customfield_10665": {"value": "Yes"},
+            "components": [{"name": "Documentation"}, {"name": "Dashboard"}],
+        }}
         assert checks[0].evaluate(issue).passed
+
+    def test_docs_impact_yes_without_documentation_component_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_docs_impact", "type": "docs_impact",
+             "docs_required_field": "customfield_10665",
+             "documentation_component": "Documentation"},
+        ])
+        issue = {"fields": {
+            "customfield_10665": {"value": "Yes"},
+            "components": [{"name": "Dashboard"}],
+        }}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "Documentation" in result.details
+
+    def test_docs_impact_no_passes_without_documentation_component(self):
+        checks = instantiate_checks([
+            {"name": "has_docs_impact", "type": "docs_impact",
+             "docs_required_field": "customfield_10665",
+             "documentation_component": "Documentation"},
+        ])
+        issue = {"fields": {
+            "customfield_10665": {"value": "No"},
+            "components": [{"name": "Dashboard"}],
+        }}
+        assert checks[0].evaluate(issue).passed
+
+    def test_docs_impact_missing_field_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_docs_impact", "type": "docs_impact",
+             "docs_required_field": "customfield_10665",
+             "documentation_component": "Documentation"},
+        ])
+        issue = {"fields": {"components": [{"name": "Documentation"}]}}
+        assert not checks[0].evaluate(issue).passed
 
     def test_target_version_present(self):
         checks = instantiate_checks([
@@ -347,13 +416,20 @@ ALL_HARD_CHECKS = [
         "auto_fix": "rice_scorer",
     },
     {"name": "has_priority", "type": "field_present", "fields": ["priority"]},
+    {"name": "has_pm", "type": "field_present",
+     "fields": ["customfield_10469"]},
+    {"name": "has_delivery_owner", "type": "field_present",
+     "fields": ["assignee"]},
     {"name": "has_sign_off", "type": "label_present",
      "labels": ["strat-creator-human-sign-off"]},
+    {"name": "has_rubric_pass", "type": "label_present",
+     "labels": ["strat-creator-rubric-pass"]},
     {"name": "has_components", "type": "field_present", "fields": ["components"]},
     {"name": "has_release_type", "type": "field_present",
      "fields": ["customfield_10851"]},
-    {"name": "has_docs_required", "type": "field_present",
-     "fields": ["customfield_10665"]},
+    {"name": "has_docs_impact", "type": "docs_impact",
+     "docs_required_field": "customfield_10665",
+     "documentation_component": "Documentation"},
     {"name": "has_target_version", "type": "field_present",
      "fields": ["customfield_10855"]},
 ]
@@ -364,8 +440,15 @@ FULL_PASSING_ISSUE = {"fields": {
     "customfield_10838": {"id": "16144"},
     "customfield_10637": 3,
     "priority": {"name": "Critical"},
-    "labels": ["strat-creator-human-sign-off"],
-    "components": [{"name": "Dashboard"}],
+    "customfield_10469": {
+        "accountId": "pm-1", "displayName": "Pat Product"},
+    "assignee": {
+        "accountId": "eng-1", "displayName": "Dev Owner"},
+    "labels": [
+        "strat-creator-human-sign-off",
+        "strat-creator-rubric-pass",
+    ],
+    "components": [{"name": "Dashboard"}, {"name": "Documentation"}],
     "customfield_10851": {"value": "Tech Preview"},
     "customfield_10665": {"value": "Yes"},
     "customfield_10855": [{"name": "rhoai-3.5"}],
@@ -403,9 +486,10 @@ class TestInstantiateChecks:
         assert checks[2].name == "has_sign_off"
 
     def test_full_pass_scenario(self):
-        """Issue with all required fields passes all 7 checks."""
+        """Issue with all required fields passes all hard checks."""
         checks = instantiate_checks(ALL_HARD_CHECKS)
         results = [c.evaluate(FULL_PASSING_ISSUE) for c in checks]
+        assert len(results) == 10
         assert compute_verdict(results) == "pass"
         assert all(r.passed for r in results)
 
@@ -453,7 +537,7 @@ class TestInstantiateChecks:
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
 
-    def test_missing_docs_required_fails(self):
+    def test_missing_docs_impact_fails(self):
         checks = instantiate_checks(ALL_HARD_CHECKS)
         issue = {**FULL_PASSING_ISSUE, "fields": {
             k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
@@ -461,6 +545,39 @@ class TestInstantiateChecks:
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
+
+    def test_missing_rubric_pass_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            **FULL_PASSING_ISSUE["fields"],
+            "labels": ["strat-creator-human-sign-off"],
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        rubric = [r for r in results if r.name == "has_rubric_pass"][0]
+        assert not rubric.passed
+
+    def test_missing_pm_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
+            if k != "customfield_10469"
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        pm = [r for r in results if r.name == "has_pm"][0]
+        assert not pm.passed
+
+    def test_missing_delivery_owner_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "fields": {
+            k: v for k, v in FULL_PASSING_ISSUE["fields"].items()
+            if k != "assignee"
+        }}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        owner = [r for r in results if r.name == "has_delivery_owner"][0]
+        assert not owner.passed
 
     def test_missing_target_version_fails(self):
         checks = instantiate_checks(ALL_HARD_CHECKS)

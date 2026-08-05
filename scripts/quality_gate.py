@@ -70,12 +70,16 @@ def build_jql(config):
 
 def collect_required_fields(config):
     """Gather all Jira field names needed by the configured checks."""
-    fields = {"key", "summary", "labels", "priority"}
+    fields = {"key", "summary", "labels", "priority", "assignee"}
     for check_cfg in config.get("checks", {}).get("hard_checks", []):
         for f in check_cfg.get("fields", []):
             fields.add(f)
         for _ in check_cfg.get("labels", []):
             fields.add("labels")
+        docs_field = check_cfg.get("docs_required_field")
+        if docs_field:
+            fields.add(docs_field)
+            fields.add("components")
     rice = config.get("rice_fields", {})
     for field_id in rice.values():
         fields.add(field_id)
@@ -124,10 +128,14 @@ def apply_verdict_label(server, user, token, issue_key, current_labels,
 CHECK_LABELS = {
     "has_rice": "RICE Score",
     "has_priority": "Priority",
+    "has_pm": "Product Manager",
+    "has_delivery_owner": "Delivery Owner",
     "has_sign_off": "Human Sign-off",
+    "has_rubric_pass": "Strategy Rubric Pass",
     "has_components": "Components",
     "has_release_type": "Release Type",
-    "has_docs_required": "Product Docs Required",
+    "has_docs_impact": "Docs Impact",
+    "has_docs_required": "Product Docs Required",  # legacy alias
     "has_target_version": "Target Version",
 }
 
@@ -139,7 +147,9 @@ FIELD_FRIENDLY_NAMES = {
     "customfield_10851": "Release Type",
     "customfield_10665": "Product Documentation Required",
     "customfield_10855": "Target Version",
+    "customfield_10469": "Product Manager",
     "priority": "Priority",
+    "assignee": "Assignee",
     "components": "Components",
 }
 
@@ -157,17 +167,28 @@ def _extract_field_detail(issue, check_name):
     if check_name == "has_priority":
         p = f.get("priority")
         return p.get("name", "?") if isinstance(p, dict) else str(p or "?")
+    if check_name == "has_pm":
+        pm = f.get("customfield_10469")
+        return pm.get("displayName", "?") if isinstance(pm, dict) else str(pm or "?")
+    if check_name == "has_delivery_owner":
+        a = f.get("assignee")
+        return a.get("displayName", "?") if isinstance(a, dict) else str(a or "?")
     if check_name == "has_sign_off":
         return "strat-creator-human-sign-off label present"
+    if check_name == "has_rubric_pass":
+        return "strat-creator-rubric-pass label present"
     if check_name == "has_components":
         comps = f.get("components", [])
         return ", ".join(c.get("name", "?") for c in comps) if comps else "?"
     if check_name == "has_release_type":
         rt = f.get("customfield_10851")
         return rt.get("value", "?") if isinstance(rt, dict) else str(rt or "?")
-    if check_name == "has_docs_required":
+    if check_name in ("has_docs_impact", "has_docs_required"):
         dr = f.get("customfield_10665")
-        return dr.get("value", "?") if isinstance(dr, dict) else str(dr or "?")
+        docs = dr.get("value", "?") if isinstance(dr, dict) else str(dr or "?")
+        comps = f.get("components", [])
+        names = ", ".join(c.get("name", "?") for c in comps) if comps else "none"
+        return f"{docs}; components: {names}"
     if check_name == "has_target_version":
         tv = f.get("customfield_10855", [])
         if isinstance(tv, list):
