@@ -1,4 +1,6 @@
-"""Hard check implementations: field_present, label_present, docs_impact."""
+"""Hard check implementations: field_present, label_present, docs_impact,
+has_child_epics.
+"""
 from scripts.checks import BaseCheck, CheckResult, register_check
 
 INVALID_VALUES = {"Undefined", "None", "N/A"}
@@ -133,4 +135,59 @@ class DocsImpactCheck(BaseCheck):
                 f"Product Documentation Required = Yes but "
                 f"{docs_component} component is not assigned"
             ),
+        )
+
+
+# In-memory enrichment key set by quality_gate.enrich_issues_with_child_epics.
+CHILD_EPICS_ATTR = "_child_epics"
+
+
+@register_check("has_child_epics")
+class HasChildEpicsCheck(BaseCheck):
+    """Feature must have ≥1 child Epic (parent hierarchy in eng projects).
+
+    Expects the orchestrator to attach child epic summaries on the issue
+    under ``_child_epics`` before evaluate(). Structural detection only —
+    the ``epic-creator-auto-decomposed`` label is not treated as a pass
+    (unlike pure label_present checks); QG1 verifies real child Epics.
+    """
+
+    def evaluate(self, issue: dict) -> CheckResult:
+        children = issue.get(CHILD_EPICS_ATTR)
+        if children is None:
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                details=(
+                    "Child epic data was not loaded; cannot verify "
+                    "child Epics"
+                ),
+            )
+        if not children:
+            projects = self.config.get("engineering_projects") or []
+            project_hint = (
+                f" in {', '.join(projects)}" if projects else ""
+            )
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                details=(
+                    f"No child Epics found{project_hint} "
+                    f"(issuetype = Epic AND parent = this Feature)"
+                ),
+            )
+
+        keys = []
+        for child in children:
+            if isinstance(child, dict):
+                keys.append(child.get("key") or "?")
+            else:
+                keys.append(str(child))
+        preview = ", ".join(keys[:5])
+        if len(keys) > 5:
+            preview += f", … (+{len(keys) - 5} more)"
+        return CheckResult(
+            name=self.name,
+            passed=True,
+            details=f"{len(keys)} child epic(s): {preview}",
         )

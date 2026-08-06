@@ -25,7 +25,10 @@ from scripts.jira_utils import (
     remove_labels,
     add_comment,
     markdown_to_adf,
+    fetch_child_epics_by_parent,
+    DEFAULT_ENGINEERING_PROJECTS,
 )
+from scripts.checks.hard_checks import CHILD_EPICS_ATTR
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
@@ -96,6 +99,33 @@ def discover_issues(config, server, user, token, issue_key=None):
     return search_issues(server, user, token, jql, fields=fields)
 
 
+def _child_epics_check_config(config):
+    """Return the has_child_epics hard-check config, or None."""
+    for check_cfg in config.get("checks", {}).get("hard_checks", []):
+        if check_cfg.get("type") == "has_child_epics":
+            return check_cfg
+    return None
+
+
+def enrich_issues_with_child_epics(issues, config, server, user, token):
+    """Attach child Epic summaries for has_child_epics evaluation.
+
+    Sets ``issue["_child_epics"]`` to a list (possibly empty). No-op when
+    the hard check is not configured.
+    """
+    check_cfg = _child_epics_check_config(config)
+    if not check_cfg or not issues:
+        return issues
+    projects = check_cfg.get("engineering_projects") or list(
+        DEFAULT_ENGINEERING_PROJECTS)
+    keys = [issue["key"] for issue in issues]
+    by_parent = fetch_child_epics_by_parent(
+        server, user, token, keys, projects=projects)
+    for issue in issues:
+        issue[CHILD_EPICS_ATTR] = by_parent.get(issue["key"], [])
+    return issues
+
+
 def evaluate_issue(issue, checks):
     """Run all checks against a single issue, return list of CheckResult."""
     return [check.evaluate(issue) for check in checks]
@@ -137,6 +167,7 @@ CHECK_LABELS = {
     "has_docs_impact": "Docs Impact",
     "has_docs_required": "Product Docs Required",  # legacy alias
     "has_target_version": "Target Version",
+    "has_child_epics": "Child Epics",
 }
 
 FIELD_FRIENDLY_NAMES = {
@@ -196,6 +227,18 @@ def _extract_field_detail(issue, check_name):
         if isinstance(tv, dict):
             return tv.get("name", "?")
         return str(tv or "?")
+    if check_name == "has_child_epics":
+        children = issue.get(CHILD_EPICS_ATTR) or []
+        if not children:
+            return "none"
+        keys = [
+            c.get("key", "?") if isinstance(c, dict) else str(c)
+            for c in children
+        ]
+        preview = ", ".join(keys[:5])
+        if len(keys) > 5:
+            preview += f", … (+{len(keys) - 5} more)"
+        return preview
     return "?"
 
 
@@ -559,6 +602,7 @@ def main(argv=None):
         return
 
     print(f"Found {len(issues)} issue(s) to evaluate.")
+    enrich_issues_with_child_epics(issues, config, server, user, token)
 
     checks = instantiate_checks(config["checks"]["hard_checks"])
     fields = collect_required_fields(config)
@@ -602,13 +646,17 @@ def main(argv=None):
         # Re-fetch and re-evaluate issues that got RICE written
         if rice_written:
             print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
+            refetched = []
             for rec in rice_written:
                 issue = get_issue(server, user, token, rec.ticket,
                                  fields=fields)
-                results_by_issue[rec.ticket] = evaluate_issue(issue, checks)
-                # Update the issue in the list for label management
+                refetched.append(issue)
+            enrich_issues_with_child_epics(
+                refetched, config, server, user, token)
+            for issue in refetched:
+                results_by_issue[issue["key"]] = evaluate_issue(issue, checks)
                 for i, orig in enumerate(issues):
-                    if orig["key"] == rec.ticket:
+                    if orig["key"] == issue["key"]:
                         issues[i] = issue
                         break
 

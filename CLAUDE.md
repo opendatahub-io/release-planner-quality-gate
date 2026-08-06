@@ -32,17 +32,21 @@ Uses `scripts/jira_utils.py` (copied from strat-creator). Requires env vars:
 
 ## Hard Checks
 
-Seven hard checks (all must pass for `rp-qg1-pass`):
+FPDoR Phase 1 hard checks (all must pass for `rp-qg1-pass`):
 
 | Check | What It Validates |
 |-------|-------------------|
 | `has_rice` | All 4 RICE fields present |
 | `has_priority` | Priority set |
+| `has_pm` | Product Manager (`customfield_10469`) |
+| `has_delivery_owner` | Assignee (Delivery Owner) |
 | `has_sign_off` | `strat-creator-human-sign-off` label |
+| `has_rubric_pass` | `strat-creator-rubric-pass` label |
 | `has_components` | At least one component |
 | `has_release_type` | Release Type (`customfield_10851`) |
-| `has_docs_required` | Product Documentation Required (`customfield_10665`) |
+| `has_docs_impact` | Docs Required set; if Yes, Documentation component |
 | `has_target_version` | Target Version (`customfield_10855`) — planning intent, not Fix Version |
+| `has_child_epics` | ≥1 child Epic (`parent` = Feature) in RHOAIENG/RHAIENG/AIPCC/INFERENG |
 
 ## RICE Custom Fields
 

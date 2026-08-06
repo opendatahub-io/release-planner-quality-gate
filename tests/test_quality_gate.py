@@ -1,6 +1,8 @@
 """Tests for the quality gate orchestrator."""
 import json
 import os
+from unittest.mock import patch
+
 import pytest
 
 from scripts.quality_gate import (
@@ -9,7 +11,9 @@ from scripts.quality_gate import (
     load_config,
     build_run_data,
     evaluate_issue,
+    enrich_issues_with_child_epics,
 )
+from scripts.jira_utils import fetch_child_epics_by_parent
 from scripts.checks import CheckResult, compute_verdict, instantiate_checks
 import scripts.checks.hard_checks  # noqa: F401
 
@@ -96,7 +100,14 @@ class TestLoadConfig:
         assert names["has_delivery_owner"] == "field_present"
         assert names["has_rubric_pass"] == "label_present"
         assert names["has_docs_impact"] == "docs_impact"
+        assert names["has_child_epics"] == "has_child_epics"
         assert "has_docs_required" not in names
+        child_cfg = next(
+            c for c in config["checks"]["hard_checks"]
+            if c["name"] == "has_child_epics"
+        )
+        assert "RHOAIENG" in child_cfg["engineering_projects"]
+        assert "INFERENG" in child_cfg["engineering_projects"]
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
@@ -238,3 +249,78 @@ class TestBuildRunData:
         assert data["summary"]["total"] == 0
         assert data["summary"]["pass"] == 0
         assert data["issues"] == []
+
+
+# --- child epic enrichment ---
+
+class TestFetchChildEpicsByParent:
+    def test_groups_epics_by_parent(self):
+        fake_issues = [
+            {
+                "key": "RHOAIENG-1",
+                "fields": {
+                    "parent": {"key": "RHAISTRAT-100"},
+                    "project": {"key": "RHOAIENG"},
+                    "summary": "Epic A",
+                },
+            },
+            {
+                "key": "RHAIENG-2",
+                "fields": {
+                    "parent": {"key": "RHAISTRAT-200"},
+                    "project": {"key": "RHAIENG"},
+                    "summary": "Epic B",
+                },
+            },
+        ]
+        with patch(
+            "scripts.jira_utils.search_issues", return_value=fake_issues
+        ) as mock_search:
+            by_parent = fetch_child_epics_by_parent(
+                "https://example.atlassian.net", "u", "t",
+                ["RHAISTRAT-100", "RHAISTRAT-200", "RHAISTRAT-300"],
+                projects=["RHOAIENG", "RHAIENG"],
+            )
+        assert mock_search.called
+        jql = mock_search.call_args[0][3]
+        assert "issuetype = Epic" in jql
+        assert "parent in (" in jql
+        assert "RHOAIENG" in jql
+        assert [c["key"] for c in by_parent["RHAISTRAT-100"]] == ["RHOAIENG-1"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-200"]] == ["RHAIENG-2"]
+        assert by_parent["RHAISTRAT-300"] == []
+
+    def test_empty_parents_returns_empty(self):
+        assert fetch_child_epics_by_parent(
+            "s", "u", "t", [], projects=["RHOAIENG"]) == {}
+
+
+class TestEnrichIssuesWithChildEpics:
+    def test_attaches_child_epics(self):
+        config = {
+            "checks": {
+                "hard_checks": [
+                    {
+                        "name": "has_child_epics",
+                        "type": "has_child_epics",
+                        "engineering_projects": ["RHOAIENG"],
+                    }
+                ]
+            }
+        }
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            return_value={
+                "RHAISTRAT-100": [{"key": "RHOAIENG-9", "project": "RHOAIENG"}],
+            },
+        ):
+            enrich_issues_with_child_epics(
+                issues, config, "s", "u", "t")
+        assert issues[0]["_child_epics"][0]["key"] == "RHOAIENG-9"
+
+    def test_noop_when_check_not_configured(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        enrich_issues_with_child_epics(
+            issues, {"checks": {"hard_checks": []}}, "s", "u", "t")
+        assert "_child_epics" not in issues[0]

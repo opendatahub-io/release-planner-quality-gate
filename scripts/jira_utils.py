@@ -129,6 +129,51 @@ def search_issues(server, user, token, jql, fields=None, max_results=50):
     return all_issues
 
 
+DEFAULT_ENGINEERING_PROJECTS = ("RHOAIENG", "RHAIENG", "AIPCC", "INFERENG")
+
+
+def fetch_child_epics_by_parent(server, user, token, parent_keys,
+                                projects=None, batch_size=50):
+    """Map Feature keys → child Epic summaries (parent hierarchy).
+
+    Queries ``issuetype = Epic AND parent in (...)`` across engineering
+    projects — the same model RHAISTRAT / release-planning uses for
+    Feature → Epic decomposition.
+    """
+    if not parent_keys:
+        return {}
+    projects = list(projects or DEFAULT_ENGINEERING_PROJECTS)
+    project_clause = ", ".join(projects)
+    by_parent = {key: [] for key in parent_keys}
+
+    keys = list(parent_keys)
+    for i in range(0, len(keys), batch_size):
+        batch = keys[i:i + batch_size]
+        parent_clause = ", ".join(batch)
+        jql = (
+            f"project in ({project_clause}) "
+            f"AND issuetype = Epic "
+            f"AND parent in ({parent_clause})"
+        )
+        issues = search_issues(
+            server, user, token, jql,
+            fields=["key", "parent", "project", "issuetype", "summary"],
+        )
+        for issue in issues:
+            fields = issue.get("fields") or {}
+            parent = fields.get("parent") or {}
+            parent_key = parent.get("key")
+            if not parent_key or parent_key not in by_parent:
+                continue
+            project = fields.get("project") or {}
+            by_parent[parent_key].append({
+                "key": issue.get("key"),
+                "project": project.get("key"),
+                "summary": fields.get("summary"),
+            })
+    return by_parent
+
+
 def query_label_counts(server, user, token, labels):
     """Count Jira issues per label. Returns {label: count} dict."""
     counts = {}
