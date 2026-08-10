@@ -142,6 +142,18 @@ class DocsImpactCheck(BaseCheck):
 CHILD_EPICS_ATTR = "_child_epics"
 
 
+def preview_child_keys(children, limit=5):
+    """Format child epic keys for details, truncating after ``limit``."""
+    keys = [
+        (c.get("key") or "?") if isinstance(c, dict) else str(c)
+        for c in children
+    ]
+    preview = ", ".join(keys[:limit])
+    if len(keys) > limit:
+        preview += f", … (+{len(keys) - limit} more)"
+    return preview
+
+
 @register_check("has_child_epics")
 class HasChildEpicsCheck(BaseCheck):
     """Feature must have ≥1 child Epic (parent hierarchy in eng projects).
@@ -177,17 +189,9 @@ class HasChildEpicsCheck(BaseCheck):
                 ),
             )
 
-        keys = []
-        for child in children:
-            if isinstance(child, dict):
-                keys.append(child.get("key") or "?")
-            else:
-                keys.append(str(child))
-        preview = ", ".join(keys[:5])
-        if len(keys) > 5:
-            preview += f", … (+{len(keys) - 5} more)"
+        preview = preview_child_keys(children)
         return CheckResult(
             name=self.name,
             passed=True,
-            details=f"{len(keys)} child epic(s): {preview}",
+            details=f"{len(children)} child epic(s): {preview}",
         )

@@ -28,7 +28,7 @@ from scripts.jira_utils import (
     fetch_child_epics_by_parent,
     DEFAULT_ENGINEERING_PROJECTS,
 )
-from scripts.checks.hard_checks import CHILD_EPICS_ATTR
+from scripts.checks.hard_checks import CHILD_EPICS_ATTR, preview_child_keys
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
@@ -231,14 +231,7 @@ def _extract_field_detail(issue, check_name):
         children = issue.get(CHILD_EPICS_ATTR) or []
         if not children:
             return "none"
-        keys = [
-            c.get("key", "?") if isinstance(c, dict) else str(c)
-            for c in children
-        ]
-        preview = ", ".join(keys[:5])
-        if len(keys) > 5:
-            preview += f", … (+{len(keys) - 5} more)"
-        return preview
+        return preview_child_keys(children)
     return "?"
 
 

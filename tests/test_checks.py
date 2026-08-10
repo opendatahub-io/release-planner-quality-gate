@@ -420,6 +420,27 @@ class TestNewHardChecks:
         assert "2 child epic" in result.details
         assert "RHOAIENG-1" in result.details
 
+    def test_child_epics_preview_truncates(self):
+        from scripts.checks.hard_checks import preview_child_keys
+
+        children = [{"key": f"RHOAIENG-{i}"} for i in range(1, 8)]
+        preview = preview_child_keys(children)
+        assert preview == (
+            "RHOAIENG-1, RHOAIENG-2, RHOAIENG-3, RHOAIENG-4, RHOAIENG-5, "
+            "… (+2 more)"
+        )
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics"},
+        ])
+        result = checks[0].evaluate({
+            "key": "RHAISTRAT-100",
+            "fields": {},
+            "_child_epics": children,
+        })
+        assert result.passed
+        assert "7 child epic" in result.details
+        assert "… (+2 more)" in result.details
+
     def test_child_epics_empty_fails(self):
         checks = instantiate_checks([
             {"name": "has_child_epics", "type": "has_child_epics",

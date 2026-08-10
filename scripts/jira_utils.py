@@ -143,21 +143,23 @@ def fetch_child_epics_by_parent(server, user, token, parent_keys,
     if not parent_keys:
         return {}
     projects = list(projects or DEFAULT_ENGINEERING_PROJECTS)
-    project_clause = ", ".join(projects)
+    project_clause = ", ".join(f'"{p}"' for p in projects)
     by_parent = {key: [] for key in parent_keys}
 
     keys = list(parent_keys)
     for i in range(0, len(keys), batch_size):
         batch = keys[i:i + batch_size]
-        parent_clause = ", ".join(batch)
+        parent_clause = ", ".join(f'"{k}"' for k in batch)
         jql = (
             f"project in ({project_clause}) "
             f"AND issuetype = Epic "
             f"AND parent in ({parent_clause})"
         )
+        # Explicit page size (API max 100); search_issues paginates.
         issues = search_issues(
             server, user, token, jql,
             fields=["key", "parent", "project", "issuetype", "summary"],
+            max_results=100,
         )
         for issue in issues:
             fields = issue.get("fields") or {}

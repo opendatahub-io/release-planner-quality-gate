@@ -284,11 +284,65 @@ class TestFetchChildEpicsByParent:
         assert mock_search.called
         jql = mock_search.call_args[0][3]
         assert "issuetype = Epic" in jql
-        assert "parent in (" in jql
-        assert "RHOAIENG" in jql
+        assert 'parent in ("RHAISTRAT-100", "RHAISTRAT-200", "RHAISTRAT-300")' in jql
+        assert 'project in ("RHOAIENG", "RHAIENG")' in jql
+        assert mock_search.call_args.kwargs.get("max_results") == 100
         assert [c["key"] for c in by_parent["RHAISTRAT-100"]] == ["RHOAIENG-1"]
         assert [c["key"] for c in by_parent["RHAISTRAT-200"]] == ["RHAIENG-2"]
         assert by_parent["RHAISTRAT-300"] == []
+
+    def test_batches_parent_keys_and_passes_max_results(self):
+        """Parent keys above batch_size must issue separate quoted JQL pages."""
+        parents = [f"RHAISTRAT-{i}" for i in range(1, 6)]
+        calls = []
+
+        def fake_search(server, user, token, jql, fields=None, max_results=50):
+            calls.append({"jql": jql, "max_results": max_results})
+            # Return one epic for the first parent in each batch.
+            if "RHAISTRAT-1" in jql:
+                return [{
+                    "key": "RHOAIENG-1",
+                    "fields": {
+                        "parent": {"key": "RHAISTRAT-1"},
+                        "project": {"key": "RHOAIENG"},
+                        "summary": "Epic 1",
+                    },
+                }]
+            if "RHAISTRAT-4" in jql:
+                return [{
+                    "key": "RHOAIENG-4",
+                    "fields": {
+                        "parent": {"key": "RHAISTRAT-4"},
+                        "project": {"key": "RHOAIENG"},
+                        "summary": "Epic 4",
+                    },
+                }]
+            return []
+
+        with patch(
+            "scripts.jira_utils.search_issues", side_effect=fake_search
+        ):
+            by_parent = fetch_child_epics_by_parent(
+                "https://example.atlassian.net", "u", "t",
+                parents,
+                projects=["RHOAIENG"],
+                batch_size=3,
+            )
+
+        assert len(calls) == 2
+        assert all(c["max_results"] == 100 for c in calls)
+        assert (
+            'parent in ("RHAISTRAT-1", "RHAISTRAT-2", "RHAISTRAT-3")'
+            in calls[0]["jql"]
+        )
+        assert (
+            'parent in ("RHAISTRAT-4", "RHAISTRAT-5")' in calls[1]["jql"]
+        )
+        assert 'project in ("RHOAIENG")' in calls[0]["jql"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-1"]] == ["RHOAIENG-1"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-4"]] == ["RHOAIENG-4"]
+        assert by_parent["RHAISTRAT-2"] == []
+        assert by_parent["RHAISTRAT-5"] == []
 
     def test_empty_parents_returns_empty(self):
         assert fetch_child_epics_by_parent(
