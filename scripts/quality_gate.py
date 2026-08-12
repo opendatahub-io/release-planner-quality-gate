@@ -127,7 +127,9 @@ def enrich_issues_with_child_epics(issues, config, server, user, token):
     try:
         by_parent = fetch_child_epics_by_parent(
             server, user, token, keys, projects=projects)
-    except Exception as exc:
+    except urllib.error.URLError as exc:
+        # Transport / HTTP failures only (HTTPError subclasses URLError).
+        # Programming or config bugs must still propagate.
         print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
         for issue in issues:
             issue[CHILD_EPICS_ATTR] = None

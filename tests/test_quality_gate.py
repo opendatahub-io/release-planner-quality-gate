@@ -1,6 +1,7 @@
 """Tests for the quality gate orchestrator."""
 import json
 import os
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -387,12 +388,22 @@ class TestEnrichIssuesWithChildEpics:
         issues = [{"key": "RHAISTRAT-100", "fields": {}}]
         with patch(
             "scripts.quality_gate.fetch_child_epics_by_parent",
-            side_effect=RuntimeError("jira down"),
+            side_effect=urllib.error.URLError("jira down"),
         ):
             ok = enrich_issues_with_child_epics(
                 issues, self._child_config(), "s", "u", "t")
         assert ok is False
         assert issues[0]["_child_epics"] is None
+
+    def test_lookup_programming_error_propagates(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=RuntimeError("bug"),
+        ):
+            with pytest.raises(RuntimeError, match="bug"):
+                enrich_issues_with_child_epics(
+                    issues, self._child_config(), "s", "u", "t")
 
     def test_suppress_write_only_when_enrichment_missing(self):
         from scripts.quality_gate import should_suppress_gate_write
