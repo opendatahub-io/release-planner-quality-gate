@@ -167,12 +167,14 @@ class HasChildEpicsCheck(BaseCheck):
     def evaluate(self, issue: dict) -> CheckResult:
         children = issue.get(CHILD_EPICS_ATTR)
         if children is None:
+            # Infrastructure / enrichment failure — not a Feature content
+            # gap. Orchestrator suppresses Jira label writes for this case.
             return CheckResult(
                 name=self.name,
                 passed=False,
                 details=(
-                    "Child epic data was not loaded; cannot verify "
-                    "child Epics"
+                    "Child epic data was not loaded (lookup failed); "
+                    "cannot verify child Epics — Jira labels left unchanged"
                 ),
             )
         if not children:

@@ -460,6 +460,7 @@ class TestNewHardChecks:
         result = checks[0].evaluate(issue)
         assert not result.passed
         assert "not loaded" in result.details
+        assert "labels left unchanged" in result.details
 
     def test_child_epics_label_alone_does_not_pass(self):
         """epic-creator-auto-decomposed is not a substitute for real children."""

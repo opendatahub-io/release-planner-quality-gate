@@ -90,7 +90,7 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
 
-`has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the four engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks).
+`has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the four engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks). If the child-Epic lookup fails (Jira outage / HTTP error), the run still writes artifacts, but **skips gate label/comment writes** for affected issues so an infrastructure failure cannot mass-flip Features to `rp-qg1-fail`.
 
 Discovery JQL still requires `strat-creator-human-sign-off` so signed-off features missing rubric/PM/owner are evaluated and labeled `rp-qg1-fail` rather than silently skipped.
 

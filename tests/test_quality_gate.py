@@ -350,8 +350,8 @@ class TestFetchChildEpicsByParent:
 
 
 class TestEnrichIssuesWithChildEpics:
-    def test_attaches_child_epics(self):
-        config = {
+    def _child_config(self):
+        return {
             "checks": {
                 "hard_checks": [
                     {
@@ -362,6 +362,8 @@ class TestEnrichIssuesWithChildEpics:
                 ]
             }
         }
+
+    def test_attaches_child_epics(self):
         issues = [{"key": "RHAISTRAT-100", "fields": {}}]
         with patch(
             "scripts.quality_gate.fetch_child_epics_by_parent",
@@ -369,12 +371,37 @@ class TestEnrichIssuesWithChildEpics:
                 "RHAISTRAT-100": [{"key": "RHOAIENG-9", "project": "RHOAIENG"}],
             },
         ):
-            enrich_issues_with_child_epics(
-                issues, config, "s", "u", "t")
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is True
         assert issues[0]["_child_epics"][0]["key"] == "RHOAIENG-9"
 
     def test_noop_when_check_not_configured(self):
         issues = [{"key": "RHAISTRAT-100", "fields": {}}]
-        enrich_issues_with_child_epics(
+        ok = enrich_issues_with_child_epics(
             issues, {"checks": {"hard_checks": []}}, "s", "u", "t")
+        assert ok is True
         assert "_child_epics" not in issues[0]
+
+    def test_lookup_failure_sets_none_and_returns_false(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=RuntimeError("jira down"),
+        ):
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is False
+        assert issues[0]["_child_epics"] is None
+
+    def test_suppress_write_only_when_enrichment_missing(self):
+        from scripts.quality_gate import should_suppress_gate_write
+        cfg = self._child_config()
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": None}, cfg) is True
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": []}, cfg) is False
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}]}, cfg) is False
+        assert should_suppress_gate_write(
+            {"key": "X"}, {"checks": {"hard_checks": []}}) is False

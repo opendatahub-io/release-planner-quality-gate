@@ -110,20 +110,42 @@ def _child_epics_check_config(config):
 def enrich_issues_with_child_epics(issues, config, server, user, token):
     """Attach child Epic summaries for has_child_epics evaluation.
 
-    Sets ``issue["_child_epics"]`` to a list (possibly empty). No-op when
-    the hard check is not configured.
+    On success, sets ``issue["_child_epics"]`` to a list (possibly empty).
+    On Jira lookup failure, sets ``_child_epics`` to ``None`` for every
+    issue and returns False so callers can suppress gate label/comment
+    writes (infra errors must not flip Features to ``rp-qg1-fail``).
+
+    Returns True when enrichment succeeded or was a no-op (check not
+    configured / empty issue list).
     """
     check_cfg = _child_epics_check_config(config)
     if not check_cfg or not issues:
-        return issues
+        return True
     projects = check_cfg.get("engineering_projects") or list(
         DEFAULT_ENGINEERING_PROJECTS)
     keys = [issue["key"] for issue in issues]
-    by_parent = fetch_child_epics_by_parent(
-        server, user, token, keys, projects=projects)
+    try:
+        by_parent = fetch_child_epics_by_parent(
+            server, user, token, keys, projects=projects)
+    except Exception as exc:
+        print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
+        for issue in issues:
+            issue[CHILD_EPICS_ATTR] = None
+        return False
     for issue in issues:
         issue[CHILD_EPICS_ATTR] = by_parent.get(issue["key"], [])
-    return issues
+    return True
+
+
+def should_suppress_gate_write(issue, config):
+    """True when child-Epic enrichment failed for a configured check.
+
+    Empty list (no children) is a content failure and must still write.
+    Missing / None data is an infrastructure gap — leave Jira labels alone.
+    """
+    if not _child_epics_check_config(config):
+        return False
+    return issue.get(CHILD_EPICS_ATTR) is None
 
 
 def evaluate_issue(issue, checks):
@@ -643,21 +665,31 @@ def main(argv=None):
             for rec in rice_written:
                 issue = get_issue(server, user, token, rec.ticket,
                                  fields=fields)
+                if not issue:
+                    print(
+                        f"  {rec.ticket}: refetch failed after RICE write",
+                        file=sys.stderr,
+                    )
+                    continue
                 refetched.append(issue)
-            enrich_issues_with_child_epics(
-                refetched, config, server, user, token)
-            for issue in refetched:
-                results_by_issue[issue["key"]] = evaluate_issue(issue, checks)
-                for i, orig in enumerate(issues):
-                    if orig["key"] == issue["key"]:
-                        issues[i] = issue
-                        break
+            if refetched:
+                enrich_issues_with_child_epics(
+                    refetched, config, server, user, token)
+                for issue in refetched:
+                    results_by_issue[issue["key"]] = evaluate_issue(
+                        issue, checks)
+                    for i, orig in enumerate(issues):
+                        if orig["key"] == issue["key"]:
+                            issues[i] = issue
+                            break
 
     print_summary(results_by_issue)
 
     # Emit artifacts before gate label/comment writes so CI still gets
     # run-data.json if a later write crashes the process. RICE writes above
-    # are also isolated per ticket for the same reason.
+    # are also isolated per ticket for the same reason. Child-Epic lookup
+    # failures are isolated too (enrich sets _child_epics=None) and must
+    # not flip Jira labels — see should_suppress_gate_write().
     run_data = build_run_data(
         results_by_issue, config, args.dry_run, mode, args.issue)
     artifact_path = write_artifacts(run_data)
@@ -675,6 +707,13 @@ def main(argv=None):
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
+            if should_suppress_gate_write(issue, config):
+                print(
+                    f"  {key}: skip write (child Epic enrichment failed; "
+                    f"labels unchanged)",
+                    file=sys.stderr,
+                )
+                continue
             try:
                 outcome = write_issue_gate_result(
                     server, user, token, issue, results, label_config,
