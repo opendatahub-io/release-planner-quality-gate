@@ -172,6 +172,7 @@ class HasChildEpicsCheck(BaseCheck):
             return CheckResult(
                 name=self.name,
                 passed=False,
+                infra_error=True,
                 details=(
                     "Child epic data was not loaded (lookup failed); "
                     "cannot verify child Epics — Jira labels left unchanged"

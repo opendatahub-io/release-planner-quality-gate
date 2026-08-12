@@ -73,6 +73,16 @@ class TestComputeVerdict:
     def test_empty_results_pass(self):
         assert compute_verdict([]) == "pass"
 
+    def test_infra_error_is_error_not_fail(self):
+        results = [
+            CheckResult(name="a", passed=True, details="ok"),
+            CheckResult(
+                name="has_child_epics", passed=False, details="not loaded",
+                infra_error=True,
+            ),
+        ]
+        assert compute_verdict(results) == "error"
+
 
 # --- FieldPresentCheck ---
 
@@ -459,8 +469,10 @@ class TestNewHardChecks:
         issue = {"key": "RHAISTRAT-100", "fields": {}}
         result = checks[0].evaluate(issue)
         assert not result.passed
+        assert result.infra_error is True
         assert "not loaded" in result.details
         assert "labels left unchanged" in result.details
+        assert compute_verdict([result]) == "error"
 
     def test_child_epics_label_alone_does_not_pass(self):
         """epic-creator-auto-decomposed is not a substitute for real children."""

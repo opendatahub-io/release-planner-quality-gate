@@ -111,9 +111,10 @@ def enrich_issues_with_child_epics(issues, config, server, user, token):
     """Attach child Epic summaries for has_child_epics evaluation.
 
     On success, sets ``issue["_child_epics"]`` to a list (possibly empty).
-    On Jira lookup failure, sets ``_child_epics`` to ``None`` for every
-    issue and returns False so callers can suppress gate label/comment
-    writes (infra errors must not flip Features to ``rp-qg1-fail``).
+    On transport / server lookup failure, sets ``_child_epics`` to ``None``
+    for every issue and returns False so callers can suppress gate
+    label/comment writes (infra errors must not flip Features to
+    ``rp-qg1-fail``). Client HTTP errors (4xx except 429) propagate.
 
     Returns True when enrichment succeeded or was a no-op (check not
     configured / empty issue list).
@@ -127,9 +128,17 @@ def enrich_issues_with_child_epics(issues, config, server, user, token):
     try:
         by_parent = fetch_child_epics_by_parent(
             server, user, token, keys, projects=projects)
+    except urllib.error.HTTPError as exc:
+        # HTTPError subclasses URLError — handle first.
+        # 4xx (except rate-limit) are client/config bugs and must propagate.
+        if exc.code < 500 and exc.code != 429:
+            raise
+        print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
+        for issue in issues:
+            issue[CHILD_EPICS_ATTR] = None
+        return False
     except urllib.error.URLError as exc:
-        # Transport / HTTP failures only (HTTPError subclasses URLError).
-        # Programming or config bugs must still propagate.
+        # Network / DNS / connection failures after retries.
         print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
         for issue in issues:
             issue[CHILD_EPICS_ATTR] = None
@@ -520,11 +529,14 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
     issues_data = []
     pass_count = 0
     fail_count = 0
+    error_count = 0
 
     for key, results in results_by_issue.items():
         verdict = compute_verdict(results)
         if verdict == "pass":
             pass_count += 1
+        elif verdict == "error":
+            error_count += 1
         else:
             fail_count += 1
         issues_data.append({
@@ -535,6 +547,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
                     "passed": r.passed,
                     "details": r.details,
                     "auto_fixable": r.auto_fixable,
+                    "infra_error": r.infra_error,
                 }
                 for r in results
             },
@@ -548,6 +561,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
             "total": len(results_by_issue),
             "pass": pass_count,
             "fail": fail_count,
+            "error": error_count,
         },
         "issues": issues_data,
     }
@@ -578,14 +592,21 @@ def print_summary(results_by_issue):
             details = "; ".join(f"{r.name}: {r.details}" for r in failed)
         else:
             details = "all checks passed"
-        status = "PASS" if verdict == "pass" else "FAIL"
+        status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
+            verdict, verdict.upper())
         print(f"{key:<20} {status:<10} {details}")
 
     total = len(results_by_issue)
     passed = sum(1 for r in results_by_issue.values()
                  if compute_verdict(r) == "pass")
+    errored = sum(1 for r in results_by_issue.values()
+                  if compute_verdict(r) == "error")
+    failed = total - passed - errored
     print(f"{'-'*70}")
-    print(f"Total: {total}  |  Pass: {passed}  |  Fail: {total - passed}")
+    print(
+        f"Total: {total}  |  Pass: {passed}  |  Fail: {failed}"
+        f"  |  Error: {errored}"
+    )
     print(f"{'='*70}\n")
 
 

@@ -70,6 +70,30 @@ class TestGenerateRunReport:
         assert len(report["failed_issues"]) == 1
         assert report["failed_issues"][0]["key"] == "RHAISTRAT-102"
 
+    def test_error_issues_separated_from_failed(self):
+        data = {
+            **SAMPLE_RUN_DATA,
+            "summary": {"total": 1, "pass": 0, "fail": 0, "error": 1},
+            "issues": [
+                {
+                    "key": "RHAISTRAT-200",
+                    "verdict": "error",
+                    "checks": {
+                        "has_child_epics": {
+                            "passed": False,
+                            "details": "not loaded",
+                            "auto_fixable": False,
+                            "infra_error": True,
+                        },
+                    },
+                },
+            ],
+        }
+        report = generate_run_report(data)
+        assert "failed_issues" not in report
+        assert len(report["error_issues"]) == 1
+        assert report["error_issues"][0]["key"] == "RHAISTRAT-200"
+
     def test_all_pass_no_failed_key(self):
         data = {
             **SAMPLE_RUN_DATA,

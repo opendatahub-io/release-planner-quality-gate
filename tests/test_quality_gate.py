@@ -230,8 +230,27 @@ class TestBuildRunData:
         assert data["summary"]["total"] == 2
         assert data["summary"]["pass"] == 1
         assert data["summary"]["fail"] == 1
+        assert data["summary"]["error"] == 0
         assert len(data["issues"]) == 2
         assert "generated_at" in data
+
+    def test_infra_error_excluded_from_fail_tally(self):
+        results = {
+            "RHAISTRAT-100": [
+                CheckResult("has_rice", True, "ok"),
+            ],
+            "RHAISTRAT-101": [
+                CheckResult(
+                    "has_child_epics", False, "not loaded",
+                    infra_error=True,
+                ),
+            ],
+        }
+        data = build_run_data(results, {}, dry_run=True, mode="batch")
+        assert data["summary"]["pass"] == 1
+        assert data["summary"]["fail"] == 0
+        assert data["summary"]["error"] == 1
+        assert data["issues"][1]["verdict"] == "error"
 
     def test_single_mode_includes_key(self):
         results = {
@@ -249,6 +268,8 @@ class TestBuildRunData:
         data = build_run_data({}, {}, dry_run=True, mode="batch")
         assert data["summary"]["total"] == 0
         assert data["summary"]["pass"] == 0
+        assert data["summary"]["fail"] == 0
+        assert data["summary"]["error"] == 0
         assert data["issues"] == []
 
 
@@ -394,6 +415,35 @@ class TestEnrichIssuesWithChildEpics:
                 issues, self._child_config(), "s", "u", "t")
         assert ok is False
         assert issues[0]["_child_epics"] is None
+
+    def test_lookup_http_5xx_sets_none_and_returns_false(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        err = urllib.error.HTTPError(
+            "https://jira.example/rest", 503, "Unavailable",
+            hdrs=None, fp=None)
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=err,
+        ):
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is False
+        assert issues[0]["_child_epics"] is None
+
+    def test_lookup_http_4xx_propagates(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        err = urllib.error.HTTPError(
+            "https://jira.example/rest", 400, "Bad Request",
+            hdrs=None, fp=None)
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=err,
+        ):
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                enrich_issues_with_child_epics(
+                    issues, self._child_config(), "s", "u", "t")
+        assert exc_info.value.code == 400
+        assert "_child_epics" not in issues[0]
 
     def test_lookup_programming_error_propagates(self):
         issues = [{"key": "RHAISTRAT-100", "fields": {}}]
