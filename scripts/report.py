@@ -25,6 +25,7 @@ def generate_run_report(run_data: dict) -> dict:
 
     passed = []
     failed = []
+    errored = []
     for issue in run_data.get("issues", []):
         entry = {
             "key": issue["key"],
@@ -38,11 +39,15 @@ def generate_run_report(run_data: dict) -> dict:
 
         if issue["verdict"] == "pass":
             passed.append(entry)
+        elif issue["verdict"] == "error":
+            errored.append(entry)
         else:
             failed.append(entry)
 
     if failed:
         report["failed_issues"] = failed
+    if errored:
+        report["error_issues"] = errored
     if passed:
         report["passed_issues"] = passed
 

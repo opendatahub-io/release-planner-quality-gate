@@ -73,6 +73,16 @@ class TestComputeVerdict:
     def test_empty_results_pass(self):
         assert compute_verdict([]) == "pass"
 
+    def test_infra_error_is_error_not_fail(self):
+        results = [
+            CheckResult(name="a", passed=True, details="ok"),
+            CheckResult(
+                name="has_child_epics", passed=False, details="not loaded",
+                infra_error=True,
+            ),
+        ]
+        assert compute_verdict(results) == "error"
+
 
 # --- FieldPresentCheck ---
 
@@ -402,6 +412,80 @@ class TestNewHardChecks:
         issue = {"fields": {"customfield_10855": []}}
         assert not checks[0].evaluate(issue).passed
 
+    def test_child_epics_present_passes(self):
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics",
+             "engineering_projects": ["RHOAIENG", "RHAIENG"]},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {},
+            "_child_epics": [
+                {"key": "RHOAIENG-1", "project": "RHOAIENG"},
+                {"key": "RHAIENG-2", "project": "RHAIENG"},
+            ],
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "2 child epic" in result.details
+        assert "RHOAIENG-1" in result.details
+
+    def test_child_epics_preview_truncates(self):
+        from scripts.checks.hard_checks import preview_child_keys
+
+        children = [{"key": f"RHOAIENG-{i}"} for i in range(1, 8)]
+        preview = preview_child_keys(children)
+        assert preview == (
+            "RHOAIENG-1, RHOAIENG-2, RHOAIENG-3, RHOAIENG-4, RHOAIENG-5, "
+            "… (+2 more)"
+        )
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics"},
+        ])
+        result = checks[0].evaluate({
+            "key": "RHAISTRAT-100",
+            "fields": {},
+            "_child_epics": children,
+        })
+        assert result.passed
+        assert "7 child epic" in result.details
+        assert "… (+2 more)" in result.details
+
+    def test_child_epics_empty_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics",
+             "engineering_projects": ["RHOAIENG", "RHAIENG", "AIPCC", "INFERENG"]},
+        ])
+        issue = {"key": "RHAISTRAT-100", "fields": {}, "_child_epics": []}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "No child Epics found" in result.details
+        assert "RHOAIENG" in result.details
+
+    def test_child_epics_missing_enrichment_fails(self):
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics"},
+        ])
+        issue = {"key": "RHAISTRAT-100", "fields": {}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert result.infra_error is True
+        assert "not loaded" in result.details
+        assert "labels left unchanged" in result.details
+        assert compute_verdict([result]) == "error"
+
+    def test_child_epics_label_alone_does_not_pass(self):
+        """epic-creator-auto-decomposed is not a substitute for real children."""
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics"},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {"labels": ["epic-creator-auto-decomposed"]},
+            "_child_epics": [],
+        }
+        assert not checks[0].evaluate(issue).passed
+
 
 # --- instantiate_checks with full config ---
 
@@ -432,27 +516,35 @@ ALL_HARD_CHECKS = [
      "documentation_component": "Documentation"},
     {"name": "has_target_version", "type": "field_present",
      "fields": ["customfield_10855"]},
+    {"name": "has_child_epics", "type": "has_child_epics",
+     "engineering_projects": [
+         "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG",
+     ]},
 ]
 
-FULL_PASSING_ISSUE = {"fields": {
-    "customfield_10862": 8,
-    "customfield_10836": 5,
-    "customfield_10838": {"id": "16144"},
-    "customfield_10637": 3,
-    "priority": {"name": "Critical"},
-    "customfield_10469": {
-        "accountId": "pm-1", "displayName": "Pat Product"},
-    "assignee": {
-        "accountId": "eng-1", "displayName": "Dev Owner"},
-    "labels": [
-        "strat-creator-human-sign-off",
-        "strat-creator-rubric-pass",
-    ],
-    "components": [{"name": "Dashboard"}, {"name": "Documentation"}],
-    "customfield_10851": {"value": "Tech Preview"},
-    "customfield_10665": {"value": "Yes"},
-    "customfield_10855": [{"name": "rhoai-3.5"}],
-}}
+FULL_PASSING_ISSUE = {
+    "key": "RHAISTRAT-100",
+    "fields": {
+        "customfield_10862": 8,
+        "customfield_10836": 5,
+        "customfield_10838": {"id": "16144"},
+        "customfield_10637": 3,
+        "priority": {"name": "Critical"},
+        "customfield_10469": {
+            "accountId": "pm-1", "displayName": "Pat Product"},
+        "assignee": {
+            "accountId": "eng-1", "displayName": "Dev Owner"},
+        "labels": [
+            "strat-creator-human-sign-off",
+            "strat-creator-rubric-pass",
+        ],
+        "components": [{"name": "Dashboard"}, {"name": "Documentation"}],
+        "customfield_10851": {"value": "Tech Preview"},
+        "customfield_10665": {"value": "Yes"},
+        "customfield_10855": [{"name": "rhoai-3.5"}],
+    },
+    "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
+}
 
 
 class TestInstantiateChecks:
@@ -489,9 +581,17 @@ class TestInstantiateChecks:
         """Issue with all required fields passes all hard checks."""
         checks = instantiate_checks(ALL_HARD_CHECKS)
         results = [c.evaluate(FULL_PASSING_ISSUE) for c in checks]
-        assert len(results) == 10
+        assert len(results) == 11
         assert compute_verdict(results) == "pass"
         assert all(r.passed for r in results)
+
+    def test_missing_child_epics_fails(self):
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        issue = {**FULL_PASSING_ISSUE, "_child_epics": []}
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "fail"
+        child = [r for r in results if r.name == "has_child_epics"][0]
+        assert not child.passed
 
     def test_missing_rice_fails(self):
         checks = instantiate_checks(ALL_HARD_CHECKS)

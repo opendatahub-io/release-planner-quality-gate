@@ -91,6 +91,16 @@ checks:
       fields:
         - customfield_10855   # Target Version
 
+    # Structural: ≥1 Epic with parent = this Feature in eng projects.
+    # epic-creator-auto-decomposed is not accepted as a substitute pass.
+    - name: has_child_epics
+      type: has_child_epics
+      engineering_projects:
+        - RHOAIENG
+        - RHAIENG
+        - AIPCC
+        - INFERENG
+
 # RICE scorer configuration
 rice_scorer:
   timeout_seconds: 300

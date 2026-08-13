@@ -1,6 +1,9 @@
 """Tests for the quality gate orchestrator."""
 import json
 import os
+import urllib.error
+from unittest.mock import patch
+
 import pytest
 
 from scripts.quality_gate import (
@@ -9,7 +12,9 @@ from scripts.quality_gate import (
     load_config,
     build_run_data,
     evaluate_issue,
+    enrich_issues_with_child_epics,
 )
+from scripts.jira_utils import fetch_child_epics_by_parent
 from scripts.checks import CheckResult, compute_verdict, instantiate_checks
 import scripts.checks.hard_checks  # noqa: F401
 
@@ -96,7 +101,14 @@ class TestLoadConfig:
         assert names["has_delivery_owner"] == "field_present"
         assert names["has_rubric_pass"] == "label_present"
         assert names["has_docs_impact"] == "docs_impact"
+        assert names["has_child_epics"] == "has_child_epics"
         assert "has_docs_required" not in names
+        child_cfg = next(
+            c for c in config["checks"]["hard_checks"]
+            if c["name"] == "has_child_epics"
+        )
+        assert "RHOAIENG" in child_cfg["engineering_projects"]
+        assert "INFERENG" in child_cfg["engineering_projects"]
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
@@ -218,8 +230,27 @@ class TestBuildRunData:
         assert data["summary"]["total"] == 2
         assert data["summary"]["pass"] == 1
         assert data["summary"]["fail"] == 1
+        assert data["summary"]["error"] == 0
         assert len(data["issues"]) == 2
         assert "generated_at" in data
+
+    def test_infra_error_excluded_from_fail_tally(self):
+        results = {
+            "RHAISTRAT-100": [
+                CheckResult("has_rice", True, "ok"),
+            ],
+            "RHAISTRAT-101": [
+                CheckResult(
+                    "has_child_epics", False, "not loaded",
+                    infra_error=True,
+                ),
+            ],
+        }
+        data = build_run_data(results, {}, dry_run=True, mode="batch")
+        assert data["summary"]["pass"] == 1
+        assert data["summary"]["fail"] == 0
+        assert data["summary"]["error"] == 1
+        assert data["issues"][1]["verdict"] == "error"
 
     def test_single_mode_includes_key(self):
         results = {
@@ -237,4 +268,201 @@ class TestBuildRunData:
         data = build_run_data({}, {}, dry_run=True, mode="batch")
         assert data["summary"]["total"] == 0
         assert data["summary"]["pass"] == 0
+        assert data["summary"]["fail"] == 0
+        assert data["summary"]["error"] == 0
         assert data["issues"] == []
+
+
+# --- child epic enrichment ---
+
+class TestFetchChildEpicsByParent:
+    def test_groups_epics_by_parent(self):
+        fake_issues = [
+            {
+                "key": "RHOAIENG-1",
+                "fields": {
+                    "parent": {"key": "RHAISTRAT-100"},
+                    "project": {"key": "RHOAIENG"},
+                    "summary": "Epic A",
+                },
+            },
+            {
+                "key": "RHAIENG-2",
+                "fields": {
+                    "parent": {"key": "RHAISTRAT-200"},
+                    "project": {"key": "RHAIENG"},
+                    "summary": "Epic B",
+                },
+            },
+        ]
+        with patch(
+            "scripts.jira_utils.search_issues", return_value=fake_issues
+        ) as mock_search:
+            by_parent = fetch_child_epics_by_parent(
+                "https://example.atlassian.net", "u", "t",
+                ["RHAISTRAT-100", "RHAISTRAT-200", "RHAISTRAT-300"],
+                projects=["RHOAIENG", "RHAIENG"],
+            )
+        assert mock_search.called
+        jql = mock_search.call_args[0][3]
+        assert "issuetype = Epic" in jql
+        assert 'parent in ("RHAISTRAT-100", "RHAISTRAT-200", "RHAISTRAT-300")' in jql
+        assert 'project in ("RHOAIENG", "RHAIENG")' in jql
+        assert mock_search.call_args.kwargs.get("max_results") == 100
+        assert [c["key"] for c in by_parent["RHAISTRAT-100"]] == ["RHOAIENG-1"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-200"]] == ["RHAIENG-2"]
+        assert by_parent["RHAISTRAT-300"] == []
+
+    def test_batches_parent_keys_and_passes_max_results(self):
+        """Parent keys above batch_size must issue separate quoted JQL pages."""
+        parents = [f"RHAISTRAT-{i}" for i in range(1, 6)]
+        calls = []
+
+        def fake_search(server, user, token, jql, fields=None, max_results=50):
+            calls.append({"jql": jql, "max_results": max_results})
+            # Return one epic for the first parent in each batch.
+            if "RHAISTRAT-1" in jql:
+                return [{
+                    "key": "RHOAIENG-1",
+                    "fields": {
+                        "parent": {"key": "RHAISTRAT-1"},
+                        "project": {"key": "RHOAIENG"},
+                        "summary": "Epic 1",
+                    },
+                }]
+            if "RHAISTRAT-4" in jql:
+                return [{
+                    "key": "RHOAIENG-4",
+                    "fields": {
+                        "parent": {"key": "RHAISTRAT-4"},
+                        "project": {"key": "RHOAIENG"},
+                        "summary": "Epic 4",
+                    },
+                }]
+            return []
+
+        with patch(
+            "scripts.jira_utils.search_issues", side_effect=fake_search
+        ):
+            by_parent = fetch_child_epics_by_parent(
+                "https://example.atlassian.net", "u", "t",
+                parents,
+                projects=["RHOAIENG"],
+                batch_size=3,
+            )
+
+        assert len(calls) == 2
+        assert all(c["max_results"] == 100 for c in calls)
+        assert (
+            'parent in ("RHAISTRAT-1", "RHAISTRAT-2", "RHAISTRAT-3")'
+            in calls[0]["jql"]
+        )
+        assert (
+            'parent in ("RHAISTRAT-4", "RHAISTRAT-5")' in calls[1]["jql"]
+        )
+        assert 'project in ("RHOAIENG")' in calls[0]["jql"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-1"]] == ["RHOAIENG-1"]
+        assert [c["key"] for c in by_parent["RHAISTRAT-4"]] == ["RHOAIENG-4"]
+        assert by_parent["RHAISTRAT-2"] == []
+        assert by_parent["RHAISTRAT-5"] == []
+
+    def test_empty_parents_returns_empty(self):
+        assert fetch_child_epics_by_parent(
+            "s", "u", "t", [], projects=["RHOAIENG"]) == {}
+
+
+class TestEnrichIssuesWithChildEpics:
+    def _child_config(self):
+        return {
+            "checks": {
+                "hard_checks": [
+                    {
+                        "name": "has_child_epics",
+                        "type": "has_child_epics",
+                        "engineering_projects": ["RHOAIENG"],
+                    }
+                ]
+            }
+        }
+
+    def test_attaches_child_epics(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            return_value={
+                "RHAISTRAT-100": [{"key": "RHOAIENG-9", "project": "RHOAIENG"}],
+            },
+        ):
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is True
+        assert issues[0]["_child_epics"][0]["key"] == "RHOAIENG-9"
+
+    def test_noop_when_check_not_configured(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        ok = enrich_issues_with_child_epics(
+            issues, {"checks": {"hard_checks": []}}, "s", "u", "t")
+        assert ok is True
+        assert "_child_epics" not in issues[0]
+
+    def test_lookup_failure_sets_none_and_returns_false(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=urllib.error.URLError("jira down"),
+        ):
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is False
+        assert issues[0]["_child_epics"] is None
+
+    def test_lookup_http_5xx_sets_none_and_returns_false(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        err = urllib.error.HTTPError(
+            "https://jira.example/rest", 503, "Unavailable",
+            hdrs=None, fp=None)
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=err,
+        ):
+            ok = enrich_issues_with_child_epics(
+                issues, self._child_config(), "s", "u", "t")
+        assert ok is False
+        assert issues[0]["_child_epics"] is None
+
+    def test_lookup_http_4xx_propagates(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        err = urllib.error.HTTPError(
+            "https://jira.example/rest", 400, "Bad Request",
+            hdrs=None, fp=None)
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=err,
+        ):
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                enrich_issues_with_child_epics(
+                    issues, self._child_config(), "s", "u", "t")
+        assert exc_info.value.code == 400
+        assert "_child_epics" not in issues[0]
+
+    def test_lookup_programming_error_propagates(self):
+        issues = [{"key": "RHAISTRAT-100", "fields": {}}]
+        with patch(
+            "scripts.quality_gate.fetch_child_epics_by_parent",
+            side_effect=RuntimeError("bug"),
+        ):
+            with pytest.raises(RuntimeError, match="bug"):
+                enrich_issues_with_child_epics(
+                    issues, self._child_config(), "s", "u", "t")
+
+    def test_suppress_write_only_when_enrichment_missing(self):
+        from scripts.quality_gate import should_suppress_gate_write
+        cfg = self._child_config()
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": None}, cfg) is True
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": []}, cfg) is False
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}]}, cfg) is False
+        assert should_suppress_gate_write(
+            {"key": "X"}, {"checks": {"hard_checks": []}}) is False

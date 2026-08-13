@@ -15,6 +15,10 @@ class CheckResult:
     details: str
     auto_fixable: bool = False
     auto_fix_action: str | None = None
+    # True when the check could not run due to infrastructure failure
+    # (not a Feature content gap). Orchestrator skips Jira writes; artifacts
+    # use verdict "error" rather than "fail".
+    infra_error: bool = False
 
 
 CHECK_REGISTRY: dict[str, type["BaseCheck"]] = {}
@@ -53,7 +57,13 @@ def instantiate_checks(check_configs: list[dict]) -> list[BaseCheck]:
 
 
 def compute_verdict(check_results: list[CheckResult]) -> str:
-    """All checks must pass for a pass verdict."""
+    """Derive pass / fail / error from check results.
+
+    ``error`` means at least one check hit an infrastructure failure and
+    must not be tallied as a content fail.
+    """
+    if any(r.infra_error for r in check_results):
+        return "error"
     if all(r.passed for r in check_results):
         return "pass"
     return "fail"

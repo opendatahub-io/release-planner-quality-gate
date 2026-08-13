@@ -25,7 +25,10 @@ from scripts.jira_utils import (
     remove_labels,
     add_comment,
     markdown_to_adf,
+    fetch_child_epics_by_parent,
+    DEFAULT_ENGINEERING_PROJECTS,
 )
+from scripts.checks.hard_checks import CHILD_EPICS_ATTR, preview_child_keys
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
@@ -96,6 +99,66 @@ def discover_issues(config, server, user, token, issue_key=None):
     return search_issues(server, user, token, jql, fields=fields)
 
 
+def _child_epics_check_config(config):
+    """Return the has_child_epics hard-check config, or None."""
+    for check_cfg in config.get("checks", {}).get("hard_checks", []):
+        if check_cfg.get("type") == "has_child_epics":
+            return check_cfg
+    return None
+
+
+def enrich_issues_with_child_epics(issues, config, server, user, token):
+    """Attach child Epic summaries for has_child_epics evaluation.
+
+    On success, sets ``issue["_child_epics"]`` to a list (possibly empty).
+    On transport / server lookup failure, sets ``_child_epics`` to ``None``
+    for every issue and returns False so callers can suppress gate
+    label/comment writes (infra errors must not flip Features to
+    ``rp-qg1-fail``). Client HTTP errors (4xx except 429) propagate.
+
+    Returns True when enrichment succeeded or was a no-op (check not
+    configured / empty issue list).
+    """
+    check_cfg = _child_epics_check_config(config)
+    if not check_cfg or not issues:
+        return True
+    projects = check_cfg.get("engineering_projects") or list(
+        DEFAULT_ENGINEERING_PROJECTS)
+    keys = [issue["key"] for issue in issues]
+    try:
+        by_parent = fetch_child_epics_by_parent(
+            server, user, token, keys, projects=projects)
+    except urllib.error.HTTPError as exc:
+        # HTTPError subclasses URLError — handle first.
+        # 4xx (except rate-limit) are client/config bugs and must propagate.
+        if exc.code < 500 and exc.code != 429:
+            raise
+        print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
+        for issue in issues:
+            issue[CHILD_EPICS_ATTR] = None
+        return False
+    except urllib.error.URLError as exc:
+        # Network / DNS / connection failures after retries.
+        print(f"Child Epic lookup failed: {exc}", file=sys.stderr)
+        for issue in issues:
+            issue[CHILD_EPICS_ATTR] = None
+        return False
+    for issue in issues:
+        issue[CHILD_EPICS_ATTR] = by_parent.get(issue["key"], [])
+    return True
+
+
+def should_suppress_gate_write(issue, config):
+    """True when child-Epic enrichment failed for a configured check.
+
+    Empty list (no children) is a content failure and must still write.
+    Missing / None data is an infrastructure gap — leave Jira labels alone.
+    """
+    if not _child_epics_check_config(config):
+        return False
+    return issue.get(CHILD_EPICS_ATTR) is None
+
+
 def evaluate_issue(issue, checks):
     """Run all checks against a single issue, return list of CheckResult."""
     return [check.evaluate(issue) for check in checks]
@@ -137,6 +200,7 @@ CHECK_LABELS = {
     "has_docs_impact": "Docs Impact",
     "has_docs_required": "Product Docs Required",  # legacy alias
     "has_target_version": "Target Version",
+    "has_child_epics": "Child Epics",
 }
 
 FIELD_FRIENDLY_NAMES = {
@@ -196,6 +260,11 @@ def _extract_field_detail(issue, check_name):
         if isinstance(tv, dict):
             return tv.get("name", "?")
         return str(tv or "?")
+    if check_name == "has_child_epics":
+        children = issue.get(CHILD_EPICS_ATTR) or []
+        if not children:
+            return "none"
+        return preview_child_keys(children)
     return "?"
 
 
@@ -460,11 +529,14 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
     issues_data = []
     pass_count = 0
     fail_count = 0
+    error_count = 0
 
     for key, results in results_by_issue.items():
         verdict = compute_verdict(results)
         if verdict == "pass":
             pass_count += 1
+        elif verdict == "error":
+            error_count += 1
         else:
             fail_count += 1
         issues_data.append({
@@ -475,6 +547,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
                     "passed": r.passed,
                     "details": r.details,
                     "auto_fixable": r.auto_fixable,
+                    "infra_error": r.infra_error,
                 }
                 for r in results
             },
@@ -488,6 +561,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
             "total": len(results_by_issue),
             "pass": pass_count,
             "fail": fail_count,
+            "error": error_count,
         },
         "issues": issues_data,
     }
@@ -518,14 +592,21 @@ def print_summary(results_by_issue):
             details = "; ".join(f"{r.name}: {r.details}" for r in failed)
         else:
             details = "all checks passed"
-        status = "PASS" if verdict == "pass" else "FAIL"
+        status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
+            verdict, verdict.upper())
         print(f"{key:<20} {status:<10} {details}")
 
     total = len(results_by_issue)
     passed = sum(1 for r in results_by_issue.values()
                  if compute_verdict(r) == "pass")
+    errored = sum(1 for r in results_by_issue.values()
+                  if compute_verdict(r) == "error")
+    failed = total - passed - errored
     print(f"{'-'*70}")
-    print(f"Total: {total}  |  Pass: {passed}  |  Fail: {total - passed}")
+    print(
+        f"Total: {total}  |  Pass: {passed}  |  Fail: {failed}"
+        f"  |  Error: {errored}"
+    )
     print(f"{'='*70}\n")
 
 
@@ -559,6 +640,7 @@ def main(argv=None):
         return
 
     print(f"Found {len(issues)} issue(s) to evaluate.")
+    enrich_issues_with_child_epics(issues, config, server, user, token)
 
     checks = instantiate_checks(config["checks"]["hard_checks"])
     fields = collect_required_fields(config)
@@ -602,21 +684,35 @@ def main(argv=None):
         # Re-fetch and re-evaluate issues that got RICE written
         if rice_written:
             print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
+            refetched = []
             for rec in rice_written:
                 issue = get_issue(server, user, token, rec.ticket,
                                  fields=fields)
-                results_by_issue[rec.ticket] = evaluate_issue(issue, checks)
-                # Update the issue in the list for label management
-                for i, orig in enumerate(issues):
-                    if orig["key"] == rec.ticket:
-                        issues[i] = issue
-                        break
+                if not issue:
+                    print(
+                        f"  {rec.ticket}: refetch failed after RICE write",
+                        file=sys.stderr,
+                    )
+                    continue
+                refetched.append(issue)
+            if refetched:
+                enrich_issues_with_child_epics(
+                    refetched, config, server, user, token)
+                for issue in refetched:
+                    results_by_issue[issue["key"]] = evaluate_issue(
+                        issue, checks)
+                    for i, orig in enumerate(issues):
+                        if orig["key"] == issue["key"]:
+                            issues[i] = issue
+                            break
 
     print_summary(results_by_issue)
 
     # Emit artifacts before gate label/comment writes so CI still gets
     # run-data.json if a later write crashes the process. RICE writes above
-    # are also isolated per ticket for the same reason.
+    # are also isolated per ticket for the same reason. Child-Epic lookup
+    # failures are isolated too (enrich sets _child_epics=None) and must
+    # not flip Jira labels — see should_suppress_gate_write().
     run_data = build_run_data(
         results_by_issue, config, args.dry_run, mode, args.issue)
     artifact_path = write_artifacts(run_data)
@@ -634,6 +730,13 @@ def main(argv=None):
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
+            if should_suppress_gate_write(issue, config):
+                print(
+                    f"  {key}: skip write (child Epic enrichment failed; "
+                    f"labels unchanged)",
+                    file=sys.stderr,
+                )
+                continue
             try:
                 outcome = write_issue_gate_result(
                     server, user, token, issue, results, label_config,
