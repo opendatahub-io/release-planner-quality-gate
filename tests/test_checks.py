@@ -518,7 +518,7 @@ ALL_HARD_CHECKS = [
      "fields": ["customfield_10855"]},
     {"name": "has_child_epics", "type": "has_child_epics",
      "engineering_projects": [
-         "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG",
+         "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG", "RHAI",
      ]},
 ]
 

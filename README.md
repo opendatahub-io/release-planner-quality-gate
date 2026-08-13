@@ -86,11 +86,11 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
 | `has_docs_impact` | `docs_impact` | Product Documentation Required is set; if Yes, `Documentation` component assigned | No |
 | `has_target_version` | `field_present` | Target Version (`customfield_10855`) is set | No |
-| `has_child_epics` | `has_child_epics` | ≥1 child Epic with `parent` = this Feature in `RHOAIENG` / `RHAIENG` / `AIPCC` / `INFERENG` | No |
+| `has_child_epics` | `has_child_epics` | ≥1 child Epic with `parent` = this Feature in `RHOAIENG` / `RHAIENG` / `AIPCC` / `INFERENG` / `RHAI` | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
 
-`has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the four engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks). If the child-Epic lookup fails with a transport or 5xx error, the run still writes artifacts with verdict `error` (excluded from the fail tally) and **skips gate label/comment writes** so an outage cannot mass-flip Features to `rp-qg1-fail`. Client HTTP 4xx errors (except rate-limit 429) propagate.
+`has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the five engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks). If the child-Epic lookup fails with a transport or 5xx error, the run still writes artifacts with verdict `error` (excluded from the fail tally) and **skips gate label/comment writes** so an outage cannot mass-flip Features to `rp-qg1-fail`. Client HTTP 4xx errors (except rate-limit 429) propagate.
 
 Discovery JQL still requires `strat-creator-human-sign-off` so signed-off features missing rubric/PM/owner are evaluated and labeled `rp-qg1-fail` rather than silently skipped.
 

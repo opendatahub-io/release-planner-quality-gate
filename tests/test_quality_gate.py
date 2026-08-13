@@ -109,6 +109,7 @@ class TestLoadConfig:
         )
         assert "RHOAIENG" in child_cfg["engineering_projects"]
         assert "INFERENG" in child_cfg["engineering_projects"]
+        assert "RHAI" in child_cfg["engineering_projects"]
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
