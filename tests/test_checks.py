@@ -462,6 +462,18 @@ class TestNewHardChecks:
         assert "No child Epics found" in result.details
         assert "RHOAIENG" in result.details
 
+    def test_rhai_child_epic_passes(self):
+        checks = instantiate_checks([
+            {"name": "has_child_epics", "type": "has_child_epics",
+             "engineering_projects": ["RHAI"]},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {},
+            "_child_epics": [{"key": "RHAI-1", "project": "RHAI"}],
+        }
+        assert checks[0].evaluate(issue).passed
+
     def test_child_epics_missing_enrichment_fails(self):
         checks = instantiate_checks([
             {"name": "has_child_epics", "type": "has_child_epics"},
