@@ -46,7 +46,7 @@ FPDoR Phase 1 hard checks (all must pass for `rp-qg1-pass`):
 | `has_release_type` | Release Type (`customfield_10851`) |
 | `has_docs_impact` | Docs Required set; if Yes, Documentation component |
 | `has_target_version` | Target Version (`customfield_10855`) — planning intent, not Fix Version |
-| `has_child_epics` | ≥1 child Epic (`parent` = Feature) in RHOAIENG/RHAIENG/AIPCC/INFERENG |
+| `has_child_epics` | ≥1 child Epic (`parent` = Feature) in RHOAIENG/RHAIENG/AIPCC/INFERENG/RHAI |
 
 ## RICE Custom Fields
 

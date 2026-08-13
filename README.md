@@ -86,7 +86,7 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
 | `has_docs_impact` | `docs_impact` | Product Documentation Required is set; if Yes, `Documentation` component assigned | No |
 | `has_target_version` | `field_present` | Target Version (`customfield_10855`) is set | No |
-| `has_child_epics` | `has_child_epics` | ≥1 child Epic with `parent` = this Feature in `RHOAIENG` / `RHAIENG` / `AIPCC` / `INFERENG` | No |
+| `has_child_epics` | `has_child_epics` | ≥1 child Epic with `parent` = this Feature in `RHOAIENG` / `RHAIENG` / `AIPCC` / `INFERENG` / `RHAI` | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
 

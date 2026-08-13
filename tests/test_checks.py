@@ -454,7 +454,7 @@ class TestNewHardChecks:
     def test_child_epics_empty_fails(self):
         checks = instantiate_checks([
             {"name": "has_child_epics", "type": "has_child_epics",
-             "engineering_projects": ["RHOAIENG", "RHAIENG", "AIPCC", "INFERENG"]},
+             "engineering_projects": ["RHOAIENG", "RHAIENG", "AIPCC", "INFERENG", "RHAI"]},
         ])
         issue = {"key": "RHAISTRAT-100", "fields": {}, "_child_epics": []}
         result = checks[0].evaluate(issue)
@@ -518,7 +518,7 @@ ALL_HARD_CHECKS = [
      "fields": ["customfield_10855"]},
     {"name": "has_child_epics", "type": "has_child_epics",
      "engineering_projects": [
-         "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG",
+         "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG", "RHAI",
      ]},
 ]
 
