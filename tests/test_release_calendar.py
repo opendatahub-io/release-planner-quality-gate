@@ -1,0 +1,172 @@
+"""Tests for discovery Target Version resolution from the release calendar."""
+from datetime import date
+
+from scripts.release_calendar import (
+    expand_jira_target_version_names,
+    is_obsolete_version_name,
+    resolve_discovery_target_versions,
+    versions_with_future_code_freeze,
+)
+
+
+SAMPLE_CALENDAR = {
+    "events": [
+        {
+            "version": "3.4",
+            "event": "GA",
+            "codeFreeze": "2026-04-15",
+        },
+        {
+            "version": "3.5",
+            "event": "EA1",
+            "codeFreeze": "2026-05-15",
+        },
+        {
+            "version": "3.5",
+            "event": "GA",
+            "codeFreeze": "2026-07-24",
+        },
+        {
+            "version": "3.6",
+            "event": "EA1",
+            "codeFreeze": "2026-08-21",
+        },
+        {
+            "version": "3.6",
+            "event": "EA2",
+            "codeFreeze": "2026-09-18",
+        },
+        {
+            "version": "3.6",
+            "event": "GA",
+            "codeFreeze": "2026-10-23",
+        },
+        {
+            "version": "rhoai-3.6",
+            "event": "EA1",
+            "codeFreeze": "2026-08-21",
+        },
+        {
+            "version": "3.6.1",
+            "event": "GA",
+            "codeFreeze": "2026-12-01",
+        },
+        {
+            "version": "bad",
+            "event": "GA",
+            "codeFreeze": "2026-12-01",
+        },
+        {
+            "version": "3.7",
+            "event": "EA1",
+            "codeFreeze": "not-a-date",
+        },
+    ]
+}
+
+
+class TestVersionsWithFutureCodeFreeze:
+    def test_selects_versions_with_any_future_freeze(self):
+        versions = versions_with_future_code_freeze(
+            SAMPLE_CALENDAR, as_of=date(2026, 8, 14)
+        )
+        assert versions == ["3.6", "3.6.1"]
+
+    def test_includes_freeze_on_as_of_day(self):
+        versions = versions_with_future_code_freeze(
+            SAMPLE_CALENDAR, as_of=date(2026, 8, 21)
+        )
+        assert "3.6" in versions
+
+    def test_excludes_obsolete_rhoai_prefix(self):
+        versions = versions_with_future_code_freeze(
+            SAMPLE_CALENDAR, as_of=date(2026, 1, 1)
+        )
+        assert "rhoai-3.6" not in versions
+        assert "bad" not in versions
+        assert "3.7" not in versions
+
+    def test_sorted_numerically(self):
+        versions = versions_with_future_code_freeze(
+            SAMPLE_CALENDAR, as_of=date(2026, 1, 1)
+        )
+        assert versions == ["3.4", "3.5", "3.6", "3.6.1"]
+
+
+class TestExpandJiraTargetVersionNames:
+    def test_expands_bare_cycle_to_product_family_events(self):
+        names = expand_jira_target_version_names(["3.6"], SAMPLE_CALENDAR)
+        assert "3.6 EA1 RHOAI RELEASE" in names
+        assert "3.6 EA1 RHAII RELEASE" in names
+        assert "3.6 EA1 RHELAI RELEASE" in names
+        assert "3.6 GA RHOAI RELEASE" in names
+        assert "rhoai-3.6" not in names
+        assert "3.6" not in names
+
+    def test_uses_calendar_events_only(self):
+        names = expand_jira_target_version_names(["3.5"], SAMPLE_CALENDAR)
+        assert "3.5 EA1 RHOAI RELEASE" in names
+        assert "3.5 GA RHOAI RELEASE" in names
+        # SAMPLE_CALENDAR has no 3.5 EA2 row
+        assert "3.5 EA2 RHOAI RELEASE" not in names
+
+
+class TestResolveDiscoveryTargetVersions:
+    def test_explicit_bare_versions_expand(self, tmp_path):
+        calendar_path = tmp_path / "cal.json"
+        calendar_path.write_text(
+            '{"events":[{"version":"3.6","event":"EA1","codeFreeze":"2026-08-21"},'
+            '{"version":"3.6","event":"GA","codeFreeze":"2026-10-23"}]}'
+        )
+        config = {
+            "jql": {
+                "target_versions": ["3.6", "rhoai-3.5"],
+                "target_versions_from_calendar": True,
+                "calendar_path": str(calendar_path),
+            }
+        }
+        names = resolve_discovery_target_versions(config)
+        assert "3.6 EA1 RHOAI RELEASE" in names
+        assert "3.6 GA RHELAI RELEASE" in names
+        assert "rhoai-3.5" not in names
+        assert "3.6" not in names
+
+    def test_explicit_picklist_names_kept(self):
+        config = {
+            "jql": {
+                "target_versions": [
+                    "3.6 EA1 RHOAI RELEASE",
+                    "rhoai-3.6",
+                ],
+                "target_versions_from_calendar": True,
+            }
+        }
+        assert resolve_discovery_target_versions(config) == [
+            "3.6 EA1 RHOAI RELEASE"
+        ]
+
+    def test_calendar_disabled_returns_empty_without_explicit(self):
+        config = {
+            "jql": {
+                "target_versions_from_calendar": False,
+            }
+        }
+        assert resolve_discovery_target_versions(config) == []
+
+    def test_loads_repo_calendar_when_enabled(self, tmp_path):
+        calendar_path = tmp_path / "cal.json"
+        calendar_path.write_text(
+            '{"events":[{"version":"3.9","event":"EA1","codeFreeze":"2027-01-01"}]}'
+        )
+        config = {
+            "jql": {
+                "target_versions_from_calendar": True,
+                "calendar_path": str(calendar_path),
+            }
+        }
+        names = resolve_discovery_target_versions(
+            config, as_of=date(2026, 8, 14)
+        )
+        assert "3.9 EA1 RHOAI RELEASE" in names
+        assert "3.9 EA1 RHAII RELEASE" in names
+        assert is_obsolete_version_name("rhoai-3.9")

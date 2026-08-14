@@ -323,6 +323,46 @@ class TestLabelPresentCheck:
         assert not result.passed
         assert "label-b" in result.details
 
+    def test_ai_first_only_na_for_legacy_without_strat_creator(self):
+        checks = instantiate_checks([{
+            "name": "has_sign_off",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-human-sign-off"],
+        }])
+        issue = {"fields": {"labels": ["some-other-label"]}}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert result.not_applicable is True
+        assert "N/A" in result.details
+
+    def test_ai_first_only_still_requires_label_for_ai_first(self):
+        checks = instantiate_checks([{
+            "name": "has_sign_off",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-human-sign-off"],
+        }])
+        issue = {"fields": {"labels": ["strat-creator-draft"]}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert not result.not_applicable
+        assert "strat-creator-human-sign-off" in result.details
+
+    def test_ai_first_only_passes_when_required_label_present(self):
+        checks = instantiate_checks([{
+            "name": "has_rubric_pass",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-rubric-pass"],
+        }])
+        issue = {"fields": {
+            "labels": ["strat-creator-rubric-pass", "strat-creator-human-sign-off"],
+        }}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert not result.not_applicable
+
 
 # --- New hard checks: components, release type, docs required, target version ---
 

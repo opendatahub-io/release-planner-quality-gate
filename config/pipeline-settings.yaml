@@ -1,13 +1,26 @@
 # Release Quality Gate 1: Feature Definition of Ready for Planning
 # Aligns to FPDoR: https://redhat.atlassian.net/wiki/spaces/RHAI/pages/442958832
-# JQL query configuration for issue discovery
+# JQL discovery: planning Features in RHAISTRAT + AIPCC with Target Version
+# pointing at a release whose code freeze is still in the future (bare 3.*
+# names from config/release-calendar.json). Human sign-off is an AI First
+# hard check — not a discovery filter.
 jql:
-  project: RHAISTRAT
-  required_labels:
-    - strat-creator-human-sign-off
+  scopes:
+    - project: RHAISTRAT
+      issuetypes: [Feature, Initiative]
+    - project: AIPCC
+      issuetypes: [Feature]
+  required_labels: []
   excluded_statuses:
     - Closed
     - Resolved
+    - Cancelled
+  # Prefer calendar-derived cycles (bare 3.* with a future code freeze),
+  # expanded to Jira picklist names like "3.6 EA1 RHOAI RELEASE".
+  # Set target_versions explicitly to override (bare 3.* or full picklist
+  # names; obsolete rhoai-3.x names are rejected).
+  target_versions_from_calendar: true
+  calendar_path: config/release-calendar.json
   # Do not list rp-qg1-pass here. Prior passes must be re-evaluated when
   # hard-check criteria change; fingerprint skip avoids redundant Jira writes.
   # Optional opt-out labels (e.g. rp-qg1-skip) may be listed if needed.
@@ -63,11 +76,13 @@ checks:
 
     - name: has_sign_off
       type: label_present
+      ai_first_only: true
       labels:
         - strat-creator-human-sign-off
 
     - name: has_rubric_pass
       type: label_present
+      ai_first_only: true
       labels:
         - strat-creator-rubric-pass
 

@@ -1,19 +1,31 @@
 # release-planner-quality-gate
 
-Quality Gate 1: Feature Definition of Ready for Planning. Validates that RHAISTRAT features have RICE scores and priority set before they are considered ready for release planning. Features that pass this gate have been scored, prioritized, and signed off by a human — the minimum bar for entering release planning.
+Quality Gate 1: Feature Definition of Ready for Planning. Validates that planning Features (and RHAISTRAT Initiatives) have FPDoR Phase 1 fields set before they are considered ready for release planning. Features that pass this gate have been scored, prioritized, and (for AI First Features) signed off — the minimum bar for entering release planning.
 
 ## What This Does
 
-Given a set of RHAISTRAT features (discovered via JQL or specified individually), the pipeline:
+Given a set of Features discovered via JQL or specified individually, the pipeline:
 
-1. **Discovers** candidate features from Jira using configurable JQL filters
-2. **Evaluates** each feature against a set of hard checks (RICE, priority, owners, sign-off, components, docs impact, target version, child epics, and FPDoR description criteria)
+1. **Discovers** candidate Features from Jira using configurable JQL filters
+2. **Evaluates** each feature against a set of hard checks (RICE, priority, owners, AI First sign-off/rubric when applicable, components, docs impact, target version, child epics, and FPDoR description criteria)
 3. **Auto-fixes** missing RICE scores using a Claude Code skill that researches the ticket and generates calibrated recommendations
 4. **Re-evaluates** auto-fixed features to see if they now pass
 5. **Labels** each feature with `rp-qg1-pass` or `rp-qg1-fail`
 6. **Reports** results to `artifacts/run-data.json` and `artifacts/run-report.yaml`
 
-The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-creator) pipeline) is a discovery prerequisite for the default batch JQL. Description criteria themselves also accept Legacy Features via description text (no Claude), matching Org Pulse.
+### Discovery population
+
+Discovery matches Org Pulse / Product Pages planning population:
+
+`(RHAISTRAT ∧ Feature|Initiative) ∨ (AIPCC ∧ Feature)`
+
+Further filters:
+
+- **Target Version** (`cf[10855]`): cycles from `config/release-calendar.json` whose **code freeze is still in the future** (inclusive of today), expanded to Jira picklist names like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`)
+- **Status**: not Closed, Resolved, or Cancelled
+- **Not** filtered on `strat-creator-human-sign-off` — that label is an AI First hard check, not a discovery prerequisite
+
+Legacy Features (no `strat-creator-*` labels) stay in scope. Sign-off and rubric checks are marked N/A for them so they do not false-fail. Description FPDoR criteria also accept Legacy Features via description text (no Claude), matching Org Pulse.
 
 ## Architecture
 
@@ -79,8 +91,8 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_priority` | `field_present` | Priority field is set | No |
 | `has_pm` | `field_present` | Product Manager (`customfield_10469`) is set | No |
 | `has_delivery_owner` | `field_present` | Assignee (Delivery Owner) is set | No |
-| `has_sign_off` | `label_present` | Has `strat-creator-human-sign-off` label | No |
-| `has_rubric_pass` | `label_present` | Has `strat-creator-rubric-pass` label (not implied by sign-off) | No |
+| `has_sign_off` | `label_present` | AI First only: has `strat-creator-human-sign-off` (N/A for Legacy) | No |
+| `has_rubric_pass` | `label_present` | AI First only: has `strat-creator-rubric-pass` (N/A for Legacy) | No |
 | `has_components` | `field_present` | At least one component assigned | No |
 | `has_release_type` | `field_present` | Release Type (`customfield_10851`) is set | No |
 | `has_docs_impact` | `docs_impact` | Product Documentation Required is set; if Yes, `Documentation` component assigned | No |
@@ -93,13 +105,13 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_uxd_description` | `description_criterion` | UXD component or explicit “N/A – no UX”; else N/A | No |
 | `has_cross_team_deps` | `description_criterion` | ≥2 eng components, dependency language, or `epic-creator-auto-decomposed` | No |
 
-**Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
+**Verdict**: all applicable checks must pass → `rp-qg1-pass`. Any applicable failure → `rp-qg1-fail`. Checks marked N/A (Legacy Features without `strat-creator-*` labels for sign-off/rubric) do not count as failures.
 
 Description checks scan the Jira **description** field only (no attachments, no Claude). Failures are content fails (labels/comments are written). They are not infrastructure errors.
 
 `has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the six engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks). If the child-Epic lookup fails with a transport or 5xx error, the run still writes artifacts with verdict `error` (excluded from the fail tally) and **skips gate label/comment writes** so an outage cannot mass-flip Features to `rp-qg1-fail`. Client HTTP 4xx errors (except rate-limit 429) propagate.
 
-Discovery JQL still requires `strat-creator-human-sign-off` so signed-off features missing rubric/PM/owner are evaluated and labeled `rp-qg1-fail` rather than silently skipped.
+**AI First vs Legacy**: a Feature is treated as AI First when it has any `strat-creator-*` label. For those Features, `has_sign_off` and `has_rubric_pass` are required. Legacy Features skip those two checks (N/A) so missing AI First-only labels do not false-fail them. Discovery itself does not require human sign-off.
 
 The check framework is extensible — new check types are registered via `@register_check("type_name")` in `scripts/checks/`.
 
@@ -129,7 +141,7 @@ Effort is relative complexity, not calendar time. E=13 is a red flag that the fe
 
 | Label | Meaning |
 |-------|---------|
-| `rp-qg1-pass` | Passed Gate 1 — FPDoR Phase 1 hard checks (RICE, priority, PM, delivery owner, rubric + human sign-off, components, release type, docs impact, target version, child epics) |
+| `rp-qg1-pass` | Passed Gate 1 — FPDoR Phase 1 hard checks (RICE, priority, PM, delivery owner, AI First rubric + human sign-off when applicable, components, release type, docs impact, target version, child epics) |
 | `rp-qg1-fail` | Failed Gate 1 — missing one or more requirements |
 | `rp-qg1-auto-rice` | RICE scores were auto-generated by the Claude skill |
 
@@ -156,6 +168,7 @@ Integration tests use [jira-emulator](https://github.com/ederign/jira-emulator) 
 ```
 scripts/
   quality_gate.py       # Main orchestrator — discover, evaluate, fix, label
+  release_calendar.py   # Target Version resolution from release-calendar.json
   rice_invoker.py       # Headless Claude /rice-score invocation + parsing
   description_signals.py # Org Pulse description-scanner port (gate path)
   report.py             # JSON + YAML artifact generation
@@ -170,12 +183,14 @@ tests/
   test_description_signals.py  # Org Pulse scanner parity
   test_quality_gate.py   # JQL builder, config, evaluate, run-data
   test_fingerprint_skip.py  # QG1-FP stability / skip logic
+  test_release_calendar.py  # Calendar Target Version helpers
   test_label_management.py  # Atomic label swap logic
   test_rice_invoker.py   # RICE structured output parsing
   test_report.py         # Report generation
 
 config/
   pipeline-settings.yaml # JQL filters, check definitions, field IDs, labels
+  release-calendar.json  # Code-freeze dates used for discovery Target Versions
 
 .claude/skills/rice-score/
   SKILL.md               # RICE skill — workflow, output format

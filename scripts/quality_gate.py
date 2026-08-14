@@ -36,6 +36,8 @@ from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
+from scripts.release_calendar import resolve_discovery_target_versions
+
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "pipeline-settings.yaml"
@@ -49,23 +51,50 @@ def load_config(path=None):
         return yaml.safe_load(f)
 
 
-def build_jql(config):
-    """Build JQL from pipeline-settings config."""
-    jql_cfg = config["jql"]
-    clauses = [f'project = {jql_cfg["project"]}']
+def _scope_clause(scope: dict) -> str:
+    """Build one project + issuetype scope clause."""
+    project = scope["project"]
+    types = scope.get("issuetypes") or ["Feature"]
+    if len(types) == 1:
+        type_clause = f'issuetype = {types[0]}'
+    else:
+        type_list = ", ".join(types)
+        type_clause = f"issuetype in ({type_list})"
+    return f"(project = {project} AND {type_clause})"
 
-    for label in jql_cfg.get("required_labels", []):
+
+def build_jql(config, as_of=None):
+    """Build discovery JQL from pipeline-settings config.
+
+    Supports either legacy ``jql.project`` or multi-scope ``jql.scopes``.
+    Target versions come from explicit ``target_versions`` or the release
+    calendar (bare ``3.*`` names with a future code freeze).
+    """
+    jql_cfg = config["jql"]
+    scopes = jql_cfg.get("scopes")
+    if scopes:
+        scope_jql = " OR ".join(_scope_clause(s) for s in scopes)
+        clauses = [f"({scope_jql})"]
+    else:
+        clauses = [f'project = {jql_cfg["project"]}']
+
+    for label in jql_cfg.get("required_labels") or []:
         clauses.append(f'labels = "{label}"')
 
-    versions = jql_cfg.get("target_versions", [])
+    versions = resolve_discovery_target_versions(config, as_of=as_of)
     if versions:
         version_list = ", ".join(f'"{v}"' for v in versions)
         clauses.append(f"cf[10855] IN ({version_list})")
 
-    for status in jql_cfg.get("excluded_statuses", []):
-        clauses.append(f'status != "{status}"')
+    excluded = jql_cfg.get("excluded_statuses") or []
+    if excluded:
+        if len(excluded) == 1:
+            clauses.append(f'status != "{excluded[0]}"')
+        else:
+            status_list = ", ".join(f'"{s}"' for s in excluded)
+            clauses.append(f"status NOT IN ({status_list})")
 
-    for label in jql_cfg.get("skip_labels", []):
+    for label in jql_cfg.get("skip_labels") or []:
         clauses.append(f'labels != "{label}"')
 
     jql = " AND ".join(clauses)
