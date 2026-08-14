@@ -46,5 +46,5 @@ FPDOR_DESCRIPTION_ERROR: RHAISTRAT-1745 — issue not found or inaccessible
 ## Notes for the orchestrator
 
 - Fingerprint / skip logic should hash **verdicts only**, not evidence text.
-- Label shortcuts (`strat-creator-rubric-pass`, human sign-off, etc.) are applied
+- Label shortcuts (`strat-creator-rubric-pass`, `strat-creator-human-sign-off`, etc.) are applied
   **before** invoking this skill; the skill must not assume those labels.
