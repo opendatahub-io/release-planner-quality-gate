@@ -100,6 +100,8 @@ checks:
         - RHAIENG
         - AIPCC
         - INFERENG
+        - RHAI
+        - RHELAI
 
 # RICE scorer configuration
 rice_scorer:

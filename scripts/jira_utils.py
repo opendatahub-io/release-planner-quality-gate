@@ -129,7 +129,9 @@ def search_issues(server, user, token, jql, fields=None, max_results=50):
     return all_issues
 
 
-DEFAULT_ENGINEERING_PROJECTS = ("RHOAIENG", "RHAIENG", "AIPCC", "INFERENG")
+DEFAULT_ENGINEERING_PROJECTS = (
+    "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG", "RHAI", "RHELAI",
+)
 
 
 def fetch_child_epics_by_parent(server, user, token, parent_keys,
