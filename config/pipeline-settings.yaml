@@ -109,8 +109,7 @@ checks:
       criterion: requirements_clarity
       label_shortcuts:
         - strat-creator-rubric-pass
-      label_prefixes:
-        - strat-creator-human
+        - strat-creator-human-sign-off
 
     - name: has_acceptance_criteria
       type: description_criterion
@@ -123,16 +122,14 @@ checks:
       criterion: risks_assumptions
       label_shortcuts:
         - strat-creator-rubric-pass
-      label_prefixes:
-        - strat-creator-human
+        - strat-creator-human-sign-off
 
     - name: has_architectural_alignment
       type: description_criterion
       criterion: architectural_alignment
       label_shortcuts:
         - strat-creator-rubric-pass
-      label_prefixes:
-        - strat-creator-human
+        - strat-creator-human-sign-off
 
     - name: has_uxd_description
       type: description_criterion
