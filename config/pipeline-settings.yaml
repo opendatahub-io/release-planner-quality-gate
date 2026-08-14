@@ -103,6 +103,48 @@ checks:
         - RHAI
         - RHELAI
 
+    # Description criteria (skill when label/field shortcuts do not apply)
+    - name: has_requirements_clarity
+      type: description_criterion
+      criterion: requirements_clarity
+      label_shortcuts:
+        - strat-creator-rubric-pass
+      label_prefixes:
+        - strat-creator-human
+
+    - name: has_acceptance_criteria
+      type: description_criterion
+      criterion: acceptance_criteria
+      label_shortcuts:
+        - strat-creator-rubric-pass
+
+    - name: has_risks_assumptions
+      type: description_criterion
+      criterion: risks_assumptions
+      label_shortcuts:
+        - strat-creator-rubric-pass
+      label_prefixes:
+        - strat-creator-human
+
+    - name: has_architectural_alignment
+      type: description_criterion
+      criterion: architectural_alignment
+      label_shortcuts:
+        - strat-creator-rubric-pass
+      label_prefixes:
+        - strat-creator-human
+
+    - name: has_uxd_description
+      type: description_criterion
+      criterion: uxd_description
+      accept_uxd_component: true
+
+    - name: has_cross_team_deps
+      type: description_criterion
+      criterion: cross_team_deps_language
+      accept_epic_creator_label: true
+      accept_multi_eng_components: true
+
 # RICE scorer configuration
 rice_scorer:
   timeout_seconds: 300
@@ -110,3 +152,7 @@ rice_scorer:
     project = RHAISTRAT
     AND labels = "strat-creator-human-sign-off"
     AND cf[10862] IS NOT EMPTY
+
+# Description skill (fpdor-description) — only invoked when shortcuts miss
+description_scorer:
+  timeout_seconds: 300

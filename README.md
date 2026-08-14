@@ -22,7 +22,7 @@ The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-crea
 The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, verdict computation, label management, and Jira writes. Claude Code skills are **read-only by design** and emit structured text the orchestrator parses:
 
 - `/rice-score` — RICE recommendations when scores are missing
-- `/fpdor-description` — FPDoR description-criteria verdicts (`pass` / `fail` / `na`) when label shortcuts do not already satisfy requirements, AC, risks, architecture, UXD N/A notes, or cross-team dependency language (orchestrator wiring lands in a follow-up)
+- `/fpdor-description` — FPDoR description-criteria verdicts (`pass` / `fail` / `na`) when label shortcuts do not already satisfy requirements, AC, risks, architecture, UXD N/A notes, or cross-team dependency language. Wired into `quality_gate.py` via `description_criterion` checks.
 
 ```
 quality_gate.py          →  JQL discovery, check evaluation, label management

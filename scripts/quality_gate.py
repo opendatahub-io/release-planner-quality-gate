@@ -28,11 +28,17 @@ from scripts.jira_utils import (
     fetch_child_epics_by_parent,
     DEFAULT_ENGINEERING_PROJECTS,
 )
-from scripts.checks.hard_checks import CHILD_EPICS_ATTR, preview_child_keys
+from scripts.checks.hard_checks import (
+    CHILD_EPICS_ATTR,
+    FPDOR_DESCRIPTION_ATTR,
+    issue_needs_description_skill,
+    preview_child_keys,
+)
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
+from scripts.description_invoker import evaluate_descriptions
 
 
 CONFIG_PATH = os.path.join(
@@ -82,6 +88,9 @@ def collect_required_fields(config):
         docs_field = check_cfg.get("docs_required_field")
         if docs_field:
             fields.add(docs_field)
+            fields.add("components")
+        if check_cfg.get("type") == "description_criterion":
+            fields.add("labels")
             fields.add("components")
     rice = config.get("rice_fields", {})
     for field_id in rice.values():
@@ -149,14 +158,59 @@ def enrich_issues_with_child_epics(issues, config, server, user, token):
 
 
 def should_suppress_gate_write(issue, config):
-    """True when child-Epic enrichment failed for a configured check.
+    """True when required enrichment failed (infra) — leave Jira labels alone.
 
-    Empty list (no children) is a content failure and must still write.
-    Missing / None data is an infrastructure gap — leave Jira labels alone.
+    Empty child-epic list is a content failure and must still write.
+    Missing / None enrichment data is an infrastructure gap.
     """
-    if not _child_epics_check_config(config):
-        return False
-    return issue.get(CHILD_EPICS_ATTR) is None
+    if _child_epics_check_config(config) and issue.get(CHILD_EPICS_ATTR) is None:
+        return True
+    hard = config.get("checks", {}).get("hard_checks", [])
+    if any(c.get("type") == "description_criterion" for c in hard):
+        # Attribute absent means skill was not required; None means failed.
+        if FPDOR_DESCRIPTION_ATTR in issue and issue.get(FPDOR_DESCRIPTION_ATTR) is None:
+            return True
+    return False
+
+
+def enrich_issues_with_description_skill(issues, config):
+    """Invoke /fpdor-description for issues that lack label/field shortcuts.
+
+    Sets ``issue["_fpdor_description"]`` to a DescriptionEvaluation on
+    success. On skill failure for a key, sets ``None`` so checks surface
+    infra_error and writes are suppressed.
+    Issues that do not need the skill leave the attribute unset.
+    """
+    hard = config.get("checks", {}).get("hard_checks", [])
+    if not any(c.get("type") == "description_criterion" for c in hard):
+        return
+    if not issues:
+        return
+
+    need = [
+        issue["key"] for issue in issues
+        if issue_needs_description_skill(issue, hard)
+    ]
+    if not need:
+        print("Description skill: all issues covered by label/field shortcuts.")
+        return
+
+    timeout = config.get("description_scorer", {}).get("timeout_seconds", 300)
+    print(f"\nEvaluating FPDoR description for {len(need)} issue(s)...")
+    result = evaluate_descriptions(need, timeout=timeout)
+    by_key = {ev.ticket: ev for ev in result.succeeded}
+    failed = set(result.failed) | set(result.timed_out)
+
+    for issue in issues:
+        key = issue["key"]
+        if key not in need:
+            continue
+        if key in by_key:
+            issue[FPDOR_DESCRIPTION_ATTR] = by_key[key]
+        elif key in failed:
+            issue[FPDOR_DESCRIPTION_ATTR] = None
+        else:
+            issue[FPDOR_DESCRIPTION_ATTR] = None
 
 
 def evaluate_issue(issue, checks):
@@ -201,6 +255,12 @@ CHECK_LABELS = {
     "has_docs_required": "Product Docs Required",  # legacy alias
     "has_target_version": "Target Version",
     "has_child_epics": "Child Epics",
+    "has_requirements_clarity": "Requirements Clarity",
+    "has_acceptance_criteria": "Acceptance Criteria",
+    "has_risks_assumptions": "Risks & Assumptions",
+    "has_architectural_alignment": "Architectural Alignment",
+    "has_uxd_description": "UXD (description)",
+    "has_cross_team_deps": "Cross-team Dependencies",
 }
 
 FIELD_FRIENDLY_NAMES = {
@@ -300,8 +360,13 @@ def build_gate_comment(issue, check_results, verdict, label_config,
 
     if verdict == "pass":
         lines.append("All hard checks passed for this feature.")
+    elif verdict == "error":
+        lines.append("Evaluation incomplete due to infrastructure errors.")
     else:
-        failed = [r for r in check_results if not r.passed]
+        failed = [
+            r for r in check_results
+            if not r.passed and not r.not_applicable and not r.infra_error
+        ]
         lines.append(f"{len(failed)} check(s) failed.")
     lines.append("")
 
@@ -314,10 +379,19 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         check_label = CHECK_LABELS.get(r.name, r.name)
         if r.name == "has_rice" and has_auto_rice:
             check_label = "RICE Score (Auto-generated)"
-        status_icon = "PASS" if r.passed else "FAIL"
-        if r.passed:
+        if r.not_applicable:
+            status_icon = "N/A"
+            detail = r.details
+        elif r.infra_error:
+            status_icon = "ERROR"
+            detail = r.details
+        elif r.passed:
+            status_icon = "PASS"
             detail = _extract_field_detail(issue, r.name)
+            if detail == "?" and r.details:
+                detail = r.details
         else:
+            status_icon = "FAIL"
             detail = _friendly_fail_details(r.details)
         lines.append(f"| {check_label} | {status_icon} | {detail} |")
 
@@ -355,8 +429,19 @@ def compute_result_fingerprint(check_results, verdict, checks_version=""):
         "checks": [
             {
                 "name": r.name,
-                "status": "pass" if r.passed else "fail",
-                "detail": "ok" if r.passed else _friendly_fail_details(r.details),
+                "status": (
+                    "na" if r.not_applicable
+                    else "error" if r.infra_error
+                    else "pass" if r.passed
+                    else "fail"
+                ),
+                # Verdict only — do not hash free-text evidence/details.
+                "detail": (
+                    "na" if r.not_applicable
+                    else "error" if r.infra_error
+                    else "ok" if r.passed
+                    else _friendly_fail_details(r.details)
+                ),
             }
             for r in check_results
         ],
@@ -548,6 +633,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
                     "details": r.details,
                     "auto_fixable": r.auto_fixable,
                     "infra_error": r.infra_error,
+                    "not_applicable": r.not_applicable,
                 }
                 for r in results
             },
@@ -587,9 +673,14 @@ def print_summary(results_by_issue):
     print(f"{'-'*70}")
     for key, results in results_by_issue.items():
         verdict = compute_verdict(results)
-        failed = [r for r in results if not r.passed]
+        failed = [
+            r for r in results
+            if not r.passed and not r.not_applicable
+        ]
         if failed:
             details = "; ".join(f"{r.name}: {r.details}" for r in failed)
+        elif any(r.not_applicable for r in results):
+            details = "all applicable checks passed"
         else:
             details = "all checks passed"
         status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
@@ -641,6 +732,7 @@ def main(argv=None):
 
     print(f"Found {len(issues)} issue(s) to evaluate.")
     enrich_issues_with_child_epics(issues, config, server, user, token)
+    enrich_issues_with_description_skill(issues, config)
 
     checks = instantiate_checks(config["checks"]["hard_checks"])
     fields = collect_required_fields(config)
@@ -698,6 +790,7 @@ def main(argv=None):
             if refetched:
                 enrich_issues_with_child_epics(
                     refetched, config, server, user, token)
+                enrich_issues_with_description_skill(refetched, config)
                 for issue in refetched:
                     results_by_issue[issue["key"]] = evaluate_issue(
                         issue, checks)

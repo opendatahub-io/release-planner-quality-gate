@@ -19,6 +19,9 @@ class CheckResult:
     # (not a Feature content gap). Orchestrator skips Jira writes; artifacts
     # use verdict "error" rather than "fail".
     infra_error: bool = False
+    # True when the check does not apply (Org Pulse ``null``). Does not fail
+    # the gate; fingerprint status is ``na``.
+    not_applicable: bool = False
 
 
 CHECK_REGISTRY: dict[str, type["BaseCheck"]] = {}
@@ -60,10 +63,12 @@ def compute_verdict(check_results: list[CheckResult]) -> str:
     """Derive pass / fail / error from check results.
 
     ``error`` means at least one check hit an infrastructure failure and
-    must not be tallied as a content fail.
+    must not be tallied as a content fail. ``not_applicable`` checks do not
+    block a pass.
     """
     if any(r.infra_error for r in check_results):
         return "error"
-    if all(r.passed for r in check_results):
+    applicable = [r for r in check_results if not r.not_applicable]
+    if not applicable or all(r.passed for r in applicable):
         return "pass"
     return "fail"

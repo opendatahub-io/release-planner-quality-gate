@@ -102,6 +102,9 @@ class TestLoadConfig:
         assert names["has_rubric_pass"] == "label_present"
         assert names["has_docs_impact"] == "docs_impact"
         assert names["has_child_epics"] == "has_child_epics"
+        assert names["has_requirements_clarity"] == "description_criterion"
+        assert names["has_acceptance_criteria"] == "description_criterion"
+        assert names["has_cross_team_deps"] == "description_criterion"
         assert "has_docs_required" not in names
         child_cfg = next(
             c for c in config["checks"]["hard_checks"]
@@ -111,6 +114,7 @@ class TestLoadConfig:
         assert "INFERENG" in child_cfg["engineering_projects"]
         assert "RHAI" in child_cfg["engineering_projects"]
         assert "RHELAI" in child_cfg["engineering_projects"]
+        assert config.get("description_scorer", {}).get("timeout_seconds") == 300
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
