@@ -6,7 +6,9 @@ have RICE scores and priority set before they are considered ready for release p
 ## Architecture
 
 "Agents analyze, scripts decide" — Python orchestrator handles deterministic logic (JQL, field
-checks, verdicts, labels). Claude Code skill handles RICE score generation when missing.
+checks, verdicts, labels). Claude Code skills handle RICE generation (`/rice-score`) and
+description-criteria evaluation (`/fpdor-description`) when needed; both are read-only and
+emit structured blocks parsed by `rice_invoker.py` / `description_invoker.py`.
 
 ## Execution Modes
 

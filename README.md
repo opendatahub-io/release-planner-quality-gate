@@ -19,20 +19,20 @@ The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-crea
 
 **"Agents analyze, scripts decide."**
 
-The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, verdict computation, label management, and Jira writes. The Claude Code skill (`/rice-score`) handles RICE score generation — it reads strategy documents, attachments, linked RFEs, and calibration data to produce scored recommendations.
+The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, verdict computation, label management, and Jira writes. Claude Code skills are **read-only by design** and emit structured text the orchestrator parses:
 
-The skill is **read-only by design**. It outputs structured text that the orchestrator parses and decides whether to write to Jira.
+- `/rice-score` — RICE recommendations when scores are missing
+- `/fpdor-description` — FPDoR description-criteria verdicts (`pass` / `fail` / `na`) when label shortcuts do not already satisfy requirements, AC, risks, architecture, UXD N/A notes, or cross-team dependency language (orchestrator wiring lands in a follow-up)
 
 ```
 quality_gate.py          →  JQL discovery, check evaluation, label management
   ├── checks/            →  Pluggable check framework (field_present, label_present)
-  ├── rice_invoker.py    →  Spawns Claude headlessly, parses structured output
+  ├── rice_invoker.py    →  Spawns Claude headlessly, parses RICE output
+  ├── description_invoker.py → Spawns Claude headlessly, parses FPDoR description verdicts
   └── report.py          →  Generates JSON + YAML artifacts
 
 /rice-score skill        →  Fetches ticket, reads attachments, applies RICE rubric
-  ├── rice-rubric.md     →  Scoring scales, principles, bias guidance
-  ├── calibration-examples.md  →  25 scored features for anchoring
-  └── jira-fields.md     →  API reference and field IDs
+/fpdor-description skill →  Fetches ticket + strategy attachments, scores description FPDoR criteria
 ```
 
 ## Quick Start
@@ -149,7 +149,8 @@ Integration tests use [jira-emulator](https://github.com/ederign/jira-emulator) 
 ```
 scripts/
   quality_gate.py       # Main orchestrator — discover, evaluate, fix, label
-  rice_invoker.py       # Headless Claude skill invocation + output parsing
+  rice_invoker.py       # Headless Claude /rice-score invocation + parsing
+  description_invoker.py # Headless Claude /fpdor-description invocation + parsing
   report.py             # JSON + YAML artifact generation
   jira_utils.py         # Shared Jira API utilities (from strat-creator)
   checks/
@@ -161,16 +162,23 @@ tests/
   test_checks.py         # Check framework + all check types
   test_quality_gate.py   # JQL builder, config, evaluate, run-data
   test_label_management.py  # Atomic label swap logic
-  test_rice_invoker.py   # Structured output parsing
+  test_rice_invoker.py   # RICE structured output parsing
+  test_description_invoker.py  # FPDoR description output parsing
   test_report.py         # Report generation
 
 config/
   pipeline-settings.yaml # JQL filters, check definitions, field IDs, labels
 
 .claude/skills/rice-score/
-  SKILL.md               # Skill definition — workflow, output format
+  SKILL.md               # RICE skill — workflow, output format
   references/
     rice-rubric.md       # Scoring scales and principles
     calibration-examples.md  # 25 scored features for anchoring
     jira-fields.md       # API reference and field IDs
+
+.claude/skills/fpdor-description/
+  SKILL.md               # Description FPDoR skill — workflow, constraints
+  references/
+    fpdor-criteria.md    # pass/fail/na rules (Org Pulse–aligned)
+    output-contract.md   # Structured block for the invoker
 ```
