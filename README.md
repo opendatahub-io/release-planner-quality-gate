@@ -7,32 +7,32 @@ Quality Gate 1: Feature Definition of Ready for Planning. Validates that RHAISTR
 Given a set of RHAISTRAT features (discovered via JQL or specified individually), the pipeline:
 
 1. **Discovers** candidate features from Jira using configurable JQL filters
-2. **Evaluates** each feature against a set of hard checks (RICE, priority, owners, sign-off, components, docs impact, target version, child epics, and related FPDoR Phase 1 fields)
+2. **Evaluates** each feature against a set of hard checks (RICE, priority, owners, sign-off, components, docs impact, target version, child epics, and FPDoR description criteria)
 3. **Auto-fixes** missing RICE scores using a Claude Code skill that researches the ticket and generates calibrated recommendations
 4. **Re-evaluates** auto-fixed features to see if they now pass
 5. **Labels** each feature with `rp-qg1-pass` or `rp-qg1-fail`
 6. **Reports** results to `artifacts/run-data.json` and `artifacts/run-report.yaml`
 
-The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-creator) pipeline) is a prerequisite — only features that have been through strategy creation and human review are in scope.
+The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-creator) pipeline) is a discovery prerequisite for the default batch JQL. Description criteria themselves also accept Legacy Features via description text (no Claude), matching Org Pulse.
 
 ## Architecture
 
 **"Agents analyze, scripts decide."**
 
-The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, verdict computation, label management, and Jira writes. Claude Code skills are **read-only by design** and emit structured text the orchestrator parses:
+The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, description scanning, verdict computation, label management, and Jira writes. The only Claude skill on the gate write path is RICE auto-fix:
 
 - `/rice-score` — RICE recommendations when scores are missing
-- `/fpdor-description` — FPDoR description-criteria verdicts (`pass` / `fail` / `na`) when label shortcuts do not already satisfy requirements, AC, risks, architecture, UXD N/A notes, or cross-team dependency language. Wired into `quality_gate.py` via `description_criterion` checks.
+- Description FPDoR criteria — **deterministic scanner** (`description_signals.py`, Org Pulse port) plus label/field shortcuts. CI does **not** call Claude for description checks. The optional `/fpdor-description` skill remains for manual review only.
 
 ```
 quality_gate.py          →  JQL discovery, check evaluation, label management
-  ├── checks/            →  Pluggable check framework (field_present, label_present)
+  ├── checks/            →  Pluggable check framework (field_present, label_present, …)
+  ├── description_signals.py → Org Pulse description-scanner port (no Claude)
   ├── rice_invoker.py    →  Spawns Claude headlessly, parses RICE output
-  ├── description_invoker.py → Spawns Claude headlessly, parses FPDoR description verdicts
   └── report.py          →  Generates JSON + YAML artifacts
 
 /rice-score skill        →  Fetches ticket, reads attachments, applies RICE rubric
-/fpdor-description skill →  Fetches ticket + strategy attachments, scores description FPDoR criteria
+/fpdor-description skill →  Optional / manual only (not used by quality_gate.py)
 ```
 
 ## Quick Start
@@ -87,8 +87,16 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_docs_impact` | `docs_impact` | Product Documentation Required is set; if Yes, `Documentation` component assigned | No |
 | `has_target_version` | `field_present` | Target Version (`customfield_10855`) is set | No |
 | `has_child_epics` | `has_child_epics` | ≥1 child Epic with `parent` = this Feature in `RHOAIENG` / `RHAIENG` / `AIPCC` / `INFERENG` / `RHAI` / `RHELAI` | No |
+| `has_requirements_clarity` | `description_criterion` | Problem/scope/requirements/use-case signals (or strat-creator label shortcuts) | No |
+| `has_acceptance_criteria` | `description_criterion` | Acceptance/success criteria in description (or `strat-creator-rubric-pass`) | No |
+| `has_risks_assumptions` | `description_criterion` | Risks/assumptions/constraints in description (or label shortcuts) | No |
+| `has_architectural_alignment` | `description_criterion` | Architecture notes / “not required”, else N/A (or label shortcuts) | No |
+| `has_uxd_description` | `description_criterion` | UXD component or explicit “N/A – no UX”; else N/A | No |
+| `has_cross_team_deps` | `description_criterion` | ≥2 eng components, dependency language, or `epic-creator-auto-decomposed` | No |
 
 **Verdict**: all checks must pass → `rp-qg1-pass`. Any failure → `rp-qg1-fail`.
+
+Description checks scan the Jira **description** field only (no attachments, no Claude). Failures are content fails (labels/comments are written). They are not infrastructure errors.
 
 `has_child_epics` uses the same Jira parent/child model as RHAISTRAT engineering decomposition (`issuetype = Epic AND parent in (…)`, scoped to the six engineering projects). The orchestrator batch-fetches children before evaluation. The `epic-creator-auto-decomposed` label is **not** accepted as a substitute pass — QG1 verifies real child Epics (same structural preference as other non-label checks). If the child-Epic lookup fails with a transport or 5xx error, the run still writes artifacts with verdict `error` (excluded from the fail tally) and **skips gate label/comment writes** so an outage cannot mass-flip Features to `rp-qg1-fail`. Client HTTP 4xx errors (except rate-limit 429) propagate.
 
@@ -150,20 +158,23 @@ Integration tests use [jira-emulator](https://github.com/ederign/jira-emulator) 
 scripts/
   quality_gate.py       # Main orchestrator — discover, evaluate, fix, label
   rice_invoker.py       # Headless Claude /rice-score invocation + parsing
-  description_invoker.py # Headless Claude /fpdor-description invocation + parsing
+  description_signals.py # Org Pulse description-scanner port (gate path)
+  description_invoker.py # Optional manual /fpdor-description helper (not wired to gate)
   report.py             # JSON + YAML artifact generation
   jira_utils.py         # Shared Jira API utilities (from strat-creator)
   checks/
     __init__.py          # Check framework — BaseCheck, registry, verdict logic
-    hard_checks.py       # field_present, label_present, docs_impact, has_child_epics
+    hard_checks.py       # field_present, label_present, docs_impact, has_child_epics, description_criterion
 
 tests/
   conftest.py            # jira-emulator fixtures
   test_checks.py         # Check framework + all check types
+  test_description_signals.py  # Org Pulse scanner parity
   test_quality_gate.py   # JQL builder, config, evaluate, run-data
+  test_fingerprint_skip.py  # QG1-FP stability / skip logic
   test_label_management.py  # Atomic label swap logic
   test_rice_invoker.py   # RICE structured output parsing
-  test_description_invoker.py  # FPDoR description output parsing
+  test_description_invoker.py  # Optional skill output parsing
   test_report.py         # Report generation
 
 config/
@@ -177,8 +188,8 @@ config/
     jira-fields.md       # API reference and field IDs
 
 .claude/skills/fpdor-description/
-  SKILL.md               # Description FPDoR skill — workflow, constraints
+  SKILL.md               # Optional manual description review (not used by CI gate)
   references/
     fpdor-criteria.md    # pass/fail/na rules (Org Pulse–aligned)
-    output-contract.md   # Structured block for the invoker
+    output-contract.md   # Structured block for the optional invoker
 ```

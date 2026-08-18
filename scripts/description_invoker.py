@@ -1,4 +1,7 @@
-"""FPDoR description criteria via Claude Code skill invocation.
+"""Optional FPDoR description criteria via Claude Code skill invocation.
+
+Not used by ``quality_gate.py`` — the gate uses ``description_signals.py``.
+Kept for manual / ad-hoc runs of the ``/fpdor-description`` skill.
 
 Invokes the fpdor-description skill headlessly, parses structured
 pass/fail/na verdicts for description-based FPDoR criteria. Read-only —

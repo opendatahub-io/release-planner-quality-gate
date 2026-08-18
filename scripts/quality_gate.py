@@ -30,16 +30,12 @@ from scripts.jira_utils import (
 )
 from scripts.checks.hard_checks import (
     CHILD_EPICS_ATTR,
-    FPDOR_DESCRIPTION_ATTR,
-    issue_needs_description_skill,
     preview_child_keys,
 )
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
-from scripts.description_invoker import evaluate_descriptions
-
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "pipeline-settings.yaml"
@@ -92,6 +88,7 @@ def collect_required_fields(config):
         if check_cfg.get("type") == "description_criterion":
             fields.add("labels")
             fields.add("components")
+            fields.add("description")
     rice = config.get("rice_fields", {})
     for field_id in rice.values():
         fields.add(field_id)
@@ -165,52 +162,7 @@ def should_suppress_gate_write(issue, config):
     """
     if _child_epics_check_config(config) and issue.get(CHILD_EPICS_ATTR) is None:
         return True
-    hard = config.get("checks", {}).get("hard_checks", [])
-    if any(c.get("type") == "description_criterion" for c in hard):
-        # Attribute absent means skill was not required; None means failed.
-        if FPDOR_DESCRIPTION_ATTR in issue and issue.get(FPDOR_DESCRIPTION_ATTR) is None:
-            return True
     return False
-
-
-def enrich_issues_with_description_skill(issues, config):
-    """Invoke /fpdor-description for issues that lack label/field shortcuts.
-
-    Sets ``issue["_fpdor_description"]`` to a DescriptionEvaluation on
-    success. On skill failure for a key, sets ``None`` so checks surface
-    infra_error and writes are suppressed.
-    Issues that do not need the skill leave the attribute unset.
-    """
-    hard = config.get("checks", {}).get("hard_checks", [])
-    if not any(c.get("type") == "description_criterion" for c in hard):
-        return
-    if not issues:
-        return
-
-    need = [
-        issue["key"] for issue in issues
-        if issue_needs_description_skill(issue, hard)
-    ]
-    if not need:
-        print("Description skill: all issues covered by label/field shortcuts.")
-        return
-
-    timeout = config.get("description_scorer", {}).get("timeout_seconds", 300)
-    print(f"\nEvaluating FPDoR description for {len(need)} issue(s)...")
-    result = evaluate_descriptions(need, timeout=timeout)
-    by_key = {ev.ticket: ev for ev in result.succeeded}
-    failed = set(result.failed) | set(result.timed_out)
-
-    for issue in issues:
-        key = issue["key"]
-        if key not in need:
-            continue
-        if key in by_key:
-            issue[FPDOR_DESCRIPTION_ATTR] = by_key[key]
-        elif key in failed:
-            issue[FPDOR_DESCRIPTION_ATTR] = None
-        else:
-            issue[FPDOR_DESCRIPTION_ATTR] = None
 
 
 def evaluate_issue(issue, checks):
@@ -440,7 +392,7 @@ def compute_result_fingerprint(check_results, verdict, checks_version=""):
                     "na" if r.not_applicable
                     else "error" if r.infra_error
                     else "ok" if r.passed
-                    else _friendly_fail_details(r.details)
+                    else "fail"
                 ),
             }
             for r in check_results
@@ -732,7 +684,6 @@ def main(argv=None):
 
     print(f"Found {len(issues)} issue(s) to evaluate.")
     enrich_issues_with_child_epics(issues, config, server, user, token)
-    enrich_issues_with_description_skill(issues, config)
 
     checks = instantiate_checks(config["checks"]["hard_checks"])
     fields = collect_required_fields(config)
@@ -773,7 +724,9 @@ def main(argv=None):
                     file=sys.stderr,
                 )
 
-        # Re-fetch and re-evaluate issues that got RICE written
+        # Re-fetch and re-evaluate issues that got RICE written.
+        # Description signals are deterministic from the description field;
+        # do not re-scan after RICE (RICE does not change description).
         if rice_written:
             print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
             refetched = []
@@ -790,7 +743,6 @@ def main(argv=None):
             if refetched:
                 enrich_issues_with_child_epics(
                     refetched, config, server, user, token)
-                enrich_issues_with_description_skill(refetched, config)
                 for issue in refetched:
                     results_by_issue[issue["key"]] = evaluate_issue(
                         issue, checks)

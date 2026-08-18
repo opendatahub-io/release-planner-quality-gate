@@ -84,6 +84,57 @@ class TestFingerprint:
         ) is None
         assert extract_fingerprint("no fingerprint here") is None
 
+    def test_fail_fingerprint_ignores_evidence_text(self):
+        """Two fails with different free-text evidence share one fingerprint."""
+        a = [
+            CheckResult(
+                "has_acceptance_criteria",
+                False,
+                "No acceptance/success criteria found in description",
+            ),
+        ]
+        b = [
+            CheckResult(
+                "has_acceptance_criteria",
+                False,
+                "Failed description criterion: missing AC bullets in strategy.md",
+            ),
+        ]
+        assert compute_result_fingerprint(a, "fail", "v1") == (
+            compute_result_fingerprint(b, "fail", "v1")
+        )
+
+    def test_na_and_error_statuses_are_stable(self):
+        """Fingerprint uses na/error tokens, not free-text details."""
+        na_a = CheckResult(
+            "has_architectural_alignment", True,
+            "Not checked — no architecture notes",
+            not_applicable=True,
+        )
+        na_b = CheckResult(
+            "has_architectural_alignment", True,
+            "Not checked — different wording",
+            not_applicable=True,
+        )
+        assert compute_result_fingerprint([na_a], "pass", "v1") == (
+            compute_result_fingerprint([na_b], "pass", "v1")
+        )
+
+        err_a = CheckResult(
+            "has_child_epics", False, "lookup failed: timeout",
+            infra_error=True,
+        )
+        err_b = CheckResult(
+            "has_child_epics", False, "lookup failed: 502 Bad Gateway",
+            infra_error=True,
+        )
+        assert compute_result_fingerprint([err_a], "error", "v1") == (
+            compute_result_fingerprint([err_b], "error", "v1")
+        )
+        assert compute_result_fingerprint([na_a], "pass", "v1") != (
+            compute_result_fingerprint([err_a], "error", "v1")
+        )
+
 
 class TestChecksVersion:
     def test_stable_for_same_config(self):

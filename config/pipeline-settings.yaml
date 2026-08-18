@@ -103,7 +103,7 @@ checks:
         - RHAI
         - RHELAI
 
-    # Description criteria (skill when label/field shortcuts do not apply)
+    # Description criteria (Org Pulse description-scanner + label/field shortcuts)
     - name: has_requirements_clarity
       type: description_criterion
       criterion: requirements_clarity
@@ -149,7 +149,3 @@ rice_scorer:
     project = RHAISTRAT
     AND labels = "strat-creator-human-sign-off"
     AND cf[10862] IS NOT EMPTY
-
-# Description skill (fpdor-description) — only invoked when shortcuts miss
-description_scorer:
-  timeout_seconds: 300

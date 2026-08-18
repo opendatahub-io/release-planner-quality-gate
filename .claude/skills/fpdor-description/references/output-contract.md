@@ -1,7 +1,8 @@
 # Output Contract — `/fpdor-description`
 
-The skill must emit **exactly one** of the following blocks so
-`scripts/description_invoker.py` can parse it reliably.
+Optional manual skill only — CI does not invoke it. When used interactively,
+emit **exactly one** of the following blocks so
+`scripts/description_invoker.py` can parse it if needed.
 
 Evidence values: single line, ≤200 characters, no newlines. Use `-` if none.
 

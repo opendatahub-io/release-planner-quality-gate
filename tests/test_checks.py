@@ -524,7 +524,7 @@ class TestNewHardChecks:
 
 
 class TestDescriptionCriterionCheck:
-    def test_rubric_label_shortcut_skips_skill(self):
+    def test_rubric_label_shortcut(self):
         checks = instantiate_checks([
             {"name": "has_requirements_clarity", "type": "description_criterion",
              "criterion": "requirements_clarity",
@@ -538,66 +538,115 @@ class TestDescriptionCriterionCheck:
         assert result.passed
         assert "shortcut" in result.details
 
-    def test_skill_pass_and_na(self):
-        from scripts.description_invoker import (
-            CriterionVerdict, DescriptionEvaluation,
-        )
+    def test_human_sign_off_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_risks_assumptions", "type": "description_criterion",
+             "criterion": "risks_assumptions",
+             "label_shortcuts": [
+                 "strat-creator-rubric-pass",
+                 "strat-creator-human-sign-off",
+             ]},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {"labels": ["strat-creator-human-sign-off"]},
+        }
+        assert checks[0].evaluate(issue).passed
+
+    def test_multi_eng_components_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}, {"name": "Serving"}],
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "2 engineering" in result.details
+
+    def test_epic_creator_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": ["epic-creator-auto-decomposed"],
+                "components": [{"name": "Dashboard"}],
+            },
+        }
+        assert checks[0].evaluate(issue).passed
+
+    def test_description_signals_pass_architecture_na(self):
         checks = instantiate_checks([
             {"name": "has_architectural_alignment",
              "type": "description_criterion",
              "criterion": "architectural_alignment"},
         ])
-        evaluation = DescriptionEvaluation(
-            ticket="RHAISTRAT-100",
-            criteria={
-                "architectural_alignment": CriterionVerdict(
-                    "architectural_alignment", "na", ""),
-            },
-        )
-        # Fill required keys so object is realistic if inspected elsewhere
-        for key in (
-            "requirements_clarity", "acceptance_criteria", "risks_assumptions",
-            "uxd_description", "cross_team_deps_language",
-        ):
-            evaluation.criteria[key] = CriterionVerdict(key, "fail", "")
         issue = {
             "key": "RHAISTRAT-100",
-            "fields": {"labels": []},
-            "_fpdor_description": evaluation,
+            "fields": {
+                "labels": [],
+                "description": (
+                    "Plain narrative with no architecture section or "
+                    "not-required phrase, long enough to count as content."
+                ),
+            },
         }
         result = checks[0].evaluate(issue)
         assert result.passed
         assert result.not_applicable is True
 
-    def test_skill_fail(self):
-        from scripts.description_invoker import (
-            CriterionVerdict, DescriptionEvaluation, CRITERION_KEYS,
-        )
+    def test_description_signals_fail_acceptance(self):
         checks = instantiate_checks([
             {"name": "has_acceptance_criteria", "type": "description_criterion",
              "criterion": "acceptance_criteria"},
         ])
-        evaluation = DescriptionEvaluation(ticket="RHAISTRAT-100", criteria={
-            key: CriterionVerdict(key, "fail", "-") for key in CRITERION_KEYS
-        })
         issue = {
             "key": "RHAISTRAT-100",
-            "fields": {"labels": []},
-            "_fpdor_description": evaluation,
+            "fields": {
+                "labels": [],
+                "description": "This feature adds a new button to the toolbar",
+            },
         }
         result = checks[0].evaluate(issue)
         assert not result.passed
         assert not result.not_applicable
+        assert not result.infra_error
 
-    def test_missing_enrichment_is_infra_error(self):
+    def test_description_signals_pass_acceptance(self):
+        checks = instantiate_checks([
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "description": "AC: The feature must support dark mode",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "description" in result.details.lower()
+
+    def test_empty_description_fails_hard_criteria(self):
         checks = instantiate_checks([
             {"name": "has_acceptance_criteria", "type": "description_criterion",
              "criterion": "acceptance_criteria"},
         ])
         issue = {"key": "RHAISTRAT-100", "fields": {"labels": []}}
         result = checks[0].evaluate(issue)
-        assert result.infra_error is True
-        assert compute_verdict([result]) == "error"
+        assert not result.passed
+        assert result.infra_error is False
 
     def test_uxd_component_shortcut(self):
         checks = instantiate_checks([
@@ -610,6 +659,57 @@ class TestDescriptionCriterionCheck:
             "fields": {"labels": [], "components": [{"name": "UXD"}]},
         }
         assert checks[0].evaluate(issue).passed
+
+    def test_legacy_feature_passes_via_description_without_strat_labels(self):
+        """Legacy Features (no strat-creator-*) can pass via description signals."""
+        rich = """
+## Problem Statement
+Operators need a clearer way to manage model endpoints at scale.
+
+## Acceptance Criteria
+- Users can list endpoints
+- Users can filter by status
+
+## Risks and Assumptions
+- API may change upstream
+- Team capacity is limited
+
+## Technical Approach
+Event-driven control plane with documented ADR-12 boundaries.
+
+N/A – no UX for this API-only feature.
+
+This feature depends on Serving API v2 and is cross-team with Model Mesh.
+"""
+        checks = instantiate_checks([
+            {"name": "has_requirements_clarity", "type": "description_criterion",
+             "criterion": "requirements_clarity"},
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+            {"name": "has_risks_assumptions", "type": "description_criterion",
+             "criterion": "risks_assumptions"},
+            {"name": "has_architectural_alignment",
+             "type": "description_criterion",
+             "criterion": "architectural_alignment"},
+            {"name": "has_uxd_description", "type": "description_criterion",
+             "criterion": "uxd_description",
+             "accept_uxd_component": True},
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-LEGACY",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}],
+                "description": rich,
+            },
+        }
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "pass"
+        assert all(r.passed for r in results)
 
 
 # --- instantiate_checks with full config ---
@@ -700,24 +800,6 @@ FULL_PASSING_ISSUE = {
     },
     "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
 }
-
-
-def _all_pass_description_eval(ticket="RHAISTRAT-100"):
-    from scripts.description_invoker import (
-        CRITERION_KEYS, CriterionVerdict, DescriptionEvaluation,
-    )
-    return DescriptionEvaluation(
-        ticket=ticket,
-        criteria={
-            key: CriterionVerdict(key, "pass", "fixture")
-            for key in CRITERION_KEYS
-        },
-    )
-
-
-# Stub skill enrichment so isolated field-failure tests do not become infra errors
-# when label/component shortcuts for description criteria are removed.
-FULL_PASSING_ISSUE["_fpdor_description"] = _all_pass_description_eval()
 
 
 class TestInstantiateChecks:

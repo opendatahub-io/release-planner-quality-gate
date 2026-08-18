@@ -2,14 +2,24 @@
 has_child_epics, description_criterion.
 """
 from scripts.checks import BaseCheck, CheckResult, register_check
-from scripts.description_invoker import CRITERION_KEYS
+from scripts.description_signals import (
+    matched_section_detail,
+    parse_description_signals,
+)
 
 INVALID_VALUES = {"Undefined", "None", "N/A"}
 # Jira user-picker fields used by FPDoR Phase 1 checks.
 USER_PICKER_FIELDS = {"assignee", "customfield_10469"}
 
-# Orchestrator attaches DescriptionEvaluation (or None on infra failure).
-FPDOR_DESCRIPTION_ATTR = "_fpdor_description"
+# Org Pulse–aligned description criteria (deterministic scanner, not Claude).
+CRITERION_KEYS = (
+    "requirements_clarity",
+    "acceptance_criteria",
+    "risks_assumptions",
+    "architectural_alignment",
+    "uxd_description",
+    "cross_team_deps_language",
+)
 
 NON_ENG_COMPONENTS = {"Documentation", "Docs", "UXD"}
 
@@ -260,25 +270,143 @@ class HasChildEpicsCheck(BaseCheck):
         )
 
 
+def _pass_via_description(name: str, section_title: str | None) -> CheckResult:
+    if section_title:
+        detail = f"Passed via description ({section_title})"
+    else:
+        detail = "Passed via description"
+    return CheckResult(name=name, passed=True, details=detail)
+
+
+def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> CheckResult:
+    """Map Org Pulse description signals → check result (fpdor.js parity)."""
+    has_content = bool(signals.get("hasContent"))
+
+    if criterion == "requirements_clarity":
+        if has_content:
+            ok = (
+                signals.get("hasRequirements")
+                or signals.get("hasUseCases")
+                or signals.get("hasScopeDefinition")
+            )
+            if ok:
+                title = matched_section_detail(
+                    signals, ["requirements", "useCases", "scope"]
+                )
+                return _pass_via_description(name, title)
+            return CheckResult(
+                name=name,
+                passed=False,
+                details=(
+                    "Description lacks problem/scope/requirements/use-case sections"
+                ),
+            )
+        return CheckResult(
+            name=name,
+            passed=False,
+            details="No requirements clarity data available",
+        )
+
+    if criterion == "acceptance_criteria":
+        if has_content and signals.get("hasAcceptanceCriteria"):
+            title = matched_section_detail(signals, ["acceptanceCriteria"])
+            return _pass_via_description(name, title)
+        return CheckResult(
+            name=name,
+            passed=False,
+            details="No acceptance/success criteria found in description",
+        )
+
+    if criterion == "risks_assumptions":
+        if has_content and signals.get("hasRisks"):
+            title = matched_section_detail(signals, ["risks"])
+            return _pass_via_description(name, title)
+        return CheckResult(
+            name=name,
+            passed=False,
+            details="No risks or assumptions documented in description",
+        )
+
+    if criterion == "architectural_alignment":
+        if has_content:
+            if signals.get("hasArchitectureNotRequired"):
+                return CheckResult(
+                    name=name,
+                    passed=True,
+                    details="Passed via description (architecture not required)",
+                )
+            if signals.get("hasArchitectureSignal"):
+                title = matched_section_detail(signals, ["architecture"])
+                return _pass_via_description(name, title)
+            return CheckResult(
+                name=name,
+                passed=True,
+                not_applicable=True,
+                details=(
+                    "Not checked — no architecture notes or "
+                    "“not required” in description"
+                ),
+            )
+        return CheckResult(
+            name=name,
+            passed=True,
+            not_applicable=True,
+            details="Not checked — no description architecture signals",
+        )
+
+    if criterion == "uxd_description":
+        if signals.get("hasNaNoUx"):
+            return CheckResult(
+                name=name,
+                passed=True,
+                details="Passed via description (N/A – no UX)",
+            )
+        return CheckResult(
+            name=name,
+            passed=True,
+            not_applicable=True,
+            details=(
+                "Not checked — no UXD component and no “N/A – no UX” note"
+            ),
+        )
+
+    if criterion == "cross_team_deps_language":
+        if has_content and signals.get("hasCrossFunctionalDependency"):
+            return _pass_via_description(name, "cross-team dependency language")
+        return CheckResult(
+            name=name,
+            passed=False,
+            details=(
+                "Need ≥2 engineering components, dependency language, or "
+                "epic-creator-auto-decomposed"
+            ),
+        )
+
+    return CheckResult(
+        name=name,
+        passed=False,
+        details=f"Invalid description criterion: {criterion!r}",
+    )
+
+
 @register_check("description_criterion")
 class DescriptionCriterionCheck(BaseCheck):
-    """FPDoR description criterion via label shortcuts or skill enrichment.
+    """FPDoR description criterion via label/field shortcuts or description signals.
 
     Config:
       criterion: one of CRITERION_KEYS
-      label_shortcuts: exact labels that pass without the skill
-      label_prefixes: label prefixes that pass without the skill
+      label_shortcuts: exact labels that pass without scanning description
+      label_prefixes: label prefixes that pass without scanning description
       accept_uxd_component: if true, UXD component passes (uxd_description)
       accept_multi_eng_components: if true, ≥2 eng components pass
       accept_epic_creator_label: if true, epic-creator-auto-decomposed passes
 
-    Expects orchestrator to set ``issue["_fpdor_description"]`` to a
-    DescriptionEvaluation when the skill ran, or ``None`` on infra failure.
-    When shortcuts apply, enrichment may be omitted.
+    Uses Org Pulse ``parse_description_signals`` on the Jira description field
+    only (no attachments, no Claude).
     """
 
     def shortcut_result(self, issue: dict) -> CheckResult | None:
-        """Return a CheckResult when a non-skill shortcut applies."""
+        """Return a CheckResult when a non-description shortcut applies."""
         hit = _label_shortcuts_hit(issue, self.config)
         if hit:
             return CheckResult(
@@ -323,70 +451,24 @@ class DescriptionCriterionCheck(BaseCheck):
         if shortcut is not None:
             return shortcut
 
-        enrichment = issue.get(FPDOR_DESCRIPTION_ATTR, _MISSING)
-        if enrichment is _MISSING:
-            return CheckResult(
+        description = issue.get("fields", {}).get("description")
+        signals = parse_description_signals(description)
+        result = _evaluate_description_signals(self.name, criterion, signals)
+
+        # Prefer accurate eng-component count in cross-team fail details.
+        if (
+            criterion == "cross_team_deps_language"
+            and not result.passed
+            and not result.not_applicable
+        ):
+            eng = _eng_component_count(issue)
+            result = CheckResult(
                 name=self.name,
                 passed=False,
-                infra_error=True,
                 details=(
-                    "Description skill was not run for this issue; "
-                    "cannot verify criterion"
+                    "Need ≥2 engineering components, dependency language, or "
+                    f"epic-creator-auto-decomposed (found {eng} eng component"
+                    f"{'' if eng == 1 else 's'})"
                 ),
             )
-        if enrichment is None:
-            return CheckResult(
-                name=self.name,
-                passed=False,
-                infra_error=True,
-                details=(
-                    "Description skill lookup failed; "
-                    "cannot verify criterion — Jira labels left unchanged"
-                ),
-            )
-
-        item = enrichment.criteria.get(criterion)
-        if item is None:
-            return CheckResult(
-                name=self.name,
-                passed=False,
-                infra_error=True,
-                details=f"Description skill omitted criterion {criterion}",
-            )
-
-        evidence = (item.evidence or "").strip()
-        evidence_note = f": {evidence}" if evidence else ""
-
-        if item.verdict == "pass":
-            return CheckResult(
-                name=self.name,
-                passed=True,
-                details=f"Passed via description skill{evidence_note}",
-            )
-        if item.verdict == "na":
-            return CheckResult(
-                name=self.name,
-                passed=True,
-                not_applicable=True,
-                details=f"N/A via description skill{evidence_note}",
-            )
-        return CheckResult(
-            name=self.name,
-            passed=False,
-            details=f"Failed description criterion{evidence_note}",
-        )
-
-
-# Sentinel: attribute missing vs explicitly None (infra failure).
-_MISSING = object()
-
-
-def issue_needs_description_skill(issue: dict, check_configs: list[dict]) -> bool:
-    """True when at least one description_criterion lacks a field/label shortcut."""
-    for cfg in check_configs or []:
-        if cfg.get("type") != "description_criterion":
-            continue
-        check = DescriptionCriterionCheck(name=cfg["name"], config=cfg)
-        if check.shortcut_result(issue) is None:
-            return True
-    return False
+        return result

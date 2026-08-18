@@ -114,7 +114,7 @@ class TestLoadConfig:
         assert "INFERENG" in child_cfg["engineering_projects"]
         assert "RHAI" in child_cfg["engineering_projects"]
         assert "RHELAI" in child_cfg["engineering_projects"]
-        assert config.get("description_scorer", {}).get("timeout_seconds") == 300
+        assert "description_scorer" not in config
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
@@ -154,6 +154,7 @@ class TestCollectRequiredFields:
         assert "assignee" in fields
         assert "customfield_10665" in fields  # docs required
         assert "components" in fields
+        assert "description" in fields
 
 
 # --- evaluate_issue ---
@@ -472,3 +473,30 @@ class TestEnrichIssuesWithChildEpics:
             {"key": "X", "_child_epics": [{"key": "E-1"}]}, cfg) is False
         assert should_suppress_gate_write(
             {"key": "X"}, {"checks": {"hard_checks": []}}) is False
+
+    def test_description_failures_do_not_suppress_writes(self):
+        """Description criteria use the scanner; content fails are not infra."""
+        from scripts.quality_gate import should_suppress_gate_write
+        cfg = {
+            "checks": {
+                "hard_checks": [
+                    {
+                        "name": "has_acceptance_criteria",
+                        "type": "description_criterion",
+                        "criterion": "acceptance_criteria",
+                    },
+                    *self._child_config()["checks"]["hard_checks"],
+                ],
+            },
+        }
+        # Child epics loaded; empty/missing description is a normal fail path.
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}],
+             "fields": {"description": ""}},
+            cfg,
+        ) is False
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}],
+             "fields": {"description": "AC: must work"}},
+            cfg,
+        ) is False

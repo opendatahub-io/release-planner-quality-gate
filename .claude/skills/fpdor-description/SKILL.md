@@ -1,18 +1,23 @@
 ---
 name: fpdor-description
 description: >-
-  Evaluate Feature Planning Definition of Ready (FPDoR) description criteria
-  for a RHAISTRAT or AIPCC Feature/Initiative. Read-only — outputs structured
-  pass/fail/na verdicts for the Python orchestrator. Used headlessly by
-  quality_gate.py when label shortcuts do not already satisfy criteria.
+  Optional manual helper to evaluate Feature Planning Definition of Ready
+  (FPDoR) description criteria for a RHAISTRAT or AIPCC Feature/Initiative.
+  Read-only. Not used by CI quality_gate.py — the gate uses the deterministic
+  Org Pulse description scanner instead.
+argument-hint: "[Jira issue key]"
 user-invocable: true
 ---
 
-# FPDoR Description Criteria Evaluation
+# FPDoR Description Criteria Evaluation (optional / manual)
 
 Evaluate **description-based** FPDoR planning criteria for a single Feature or
-Initiative. This skill is **read-only** — it does NOT write to Jira. The Python
-orchestrator applies verdicts and manages labels/comments.
+Initiative. This skill is **read-only** — it does NOT write to Jira.
+
+**Important:** `quality_gate.py` does **not** invoke this skill. CI evaluates
+description criteria with `scripts/description_signals.py` (Org Pulse
+`parseDescriptionSignals` port) plus label/field shortcuts. Use this skill only
+for ad-hoc human review when you want Claude to inspect attachments as well.
 
 Do **not** score Jira fields (RICE, PM, Target Version, components, etc.).
 Those are deterministic checks outside this skill.
@@ -75,8 +80,7 @@ Use `references/fpdor-criteria.md`. For each criterion return exactly one of:
 ### Step 4: Emit structured output
 
 Emit **exactly one** block in the format from `references/output-contract.md`.
-Evidence lines must be short (≤200 chars) quotes or paraphrases — used for
-gate comments only, **not** for fingerprint hashing.
+Evidence lines must be short (≤200 chars) quotes or paraphrases.
 
 ## Constraints
 
@@ -85,3 +89,4 @@ gate comments only, **not** for fingerprint hashing.
 - Prefer `na` over `fail` when Org Pulse treats the item as not-checked
   (architecture without signals; UXD without N/A note).
 - Do not invent RFE/link/label passes — the orchestrator handles those.
+- Remember: production gate labeling uses the scanner, not this skill.

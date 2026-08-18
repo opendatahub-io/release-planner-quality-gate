@@ -6,9 +6,11 @@ have RICE scores and priority set before they are considered ready for release p
 ## Architecture
 
 "Agents analyze, scripts decide" — Python orchestrator handles deterministic logic (JQL, field
-checks, verdicts, labels). Claude Code skills handle RICE generation (`/rice-score`) and
-description-criteria evaluation (`/fpdor-description`) when needed; both are read-only and
-emit structured blocks parsed by `rice_invoker.py` / `description_invoker.py`.
+checks, description scanning via `description_signals.py`, verdicts, labels). Claude Code is
+used on the gate write path only for RICE generation (`/rice-score` → `rice_invoker.py`).
+Description FPDoR criteria use the Org Pulse scanner + label/field shortcuts — **no Claude in
+CI**. The `/fpdor-description` skill is optional/manual only if you want a human-readable
+review; `quality_gate.py` does not invoke it.
 
 ## Execution Modes
 
@@ -49,6 +51,16 @@ FPDoR Phase 1 hard checks (all must pass for `rp-qg1-pass`):
 | `has_docs_impact` | Docs Required set; if Yes, Documentation component |
 | `has_target_version` | Target Version (`customfield_10855`) — planning intent, not Fix Version |
 | `has_child_epics` | ≥1 child Epic (`parent` = Feature) in RHOAIENG/RHAIENG/AIPCC/INFERENG/RHAI/RHELAI |
+| `has_requirements_clarity` | Description signals or strat-creator label shortcuts |
+| `has_acceptance_criteria` | Description AC signals or `strat-creator-rubric-pass` |
+| `has_risks_assumptions` | Description risk signals or label shortcuts |
+| `has_architectural_alignment` | Architecture / “not required” / N/A (or label shortcuts) |
+| `has_uxd_description` | UXD component or “N/A – no UX”; else N/A |
+| `has_cross_team_deps` | ≥2 eng components, dep language, or epic-creator label |
+
+Description checks are deterministic (`scripts/description_signals.py`). Failures write
+`rp-qg1-fail` like other content checks. Fingerprints hash fail/na/error status only — not
+free-text evidence — so wording changes do not churn Jira comments.
 
 ## RICE Custom Fields
 
