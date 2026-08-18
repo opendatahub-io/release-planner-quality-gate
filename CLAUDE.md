@@ -9,8 +9,7 @@ have RICE scores and priority set before they are considered ready for release p
 checks, description scanning via `description_signals.py`, verdicts, labels). Claude Code is
 used on the gate write path only for RICE generation (`/rice-score` → `rice_invoker.py`).
 Description FPDoR criteria use the Org Pulse scanner + label/field shortcuts — **no Claude in
-CI**. The `/fpdor-description` skill is optional/manual only if you want a human-readable
-review; `quality_gate.py` does not invoke it.
+CI**.
 
 ## Execution Modes
 

@@ -22,7 +22,7 @@ The `strat-creator-human-sign-off` label (from the [strat-creator](../strat-crea
 The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL queries, field validation, description scanning, verdict computation, label management, and Jira writes. The only Claude skill on the gate write path is RICE auto-fix:
 
 - `/rice-score` — RICE recommendations when scores are missing
-- Description FPDoR criteria — **deterministic scanner** (`description_signals.py`, Org Pulse port) plus label/field shortcuts. CI does **not** call Claude for description checks. The optional `/fpdor-description` skill remains for manual review only.
+- Description FPDoR criteria — **deterministic scanner** (`description_signals.py`, Org Pulse port) plus label/field shortcuts. CI does **not** call Claude for description checks.
 
 ```
 quality_gate.py          →  JQL discovery, check evaluation, label management
@@ -32,7 +32,6 @@ quality_gate.py          →  JQL discovery, check evaluation, label management
   └── report.py          →  Generates JSON + YAML artifacts
 
 /rice-score skill        →  Fetches ticket, reads attachments, applies RICE rubric
-/fpdor-description skill →  Optional / manual only (not used by quality_gate.py)
 ```
 
 ## Quick Start
@@ -159,7 +158,6 @@ scripts/
   quality_gate.py       # Main orchestrator — discover, evaluate, fix, label
   rice_invoker.py       # Headless Claude /rice-score invocation + parsing
   description_signals.py # Org Pulse description-scanner port (gate path)
-  description_invoker.py # Optional manual /fpdor-description helper (not wired to gate)
   report.py             # JSON + YAML artifact generation
   jira_utils.py         # Shared Jira API utilities (from strat-creator)
   checks/
@@ -174,7 +172,6 @@ tests/
   test_fingerprint_skip.py  # QG1-FP stability / skip logic
   test_label_management.py  # Atomic label swap logic
   test_rice_invoker.py   # RICE structured output parsing
-  test_description_invoker.py  # Optional skill output parsing
   test_report.py         # Report generation
 
 config/
@@ -186,10 +183,4 @@ config/
     rice-rubric.md       # Scoring scales and principles
     calibration-examples.md  # 25 scored features for anchoring
     jira-fields.md       # API reference and field IDs
-
-.claude/skills/fpdor-description/
-  SKILL.md               # Optional manual description review (not used by CI gate)
-  references/
-    fpdor-criteria.md    # pass/fail/na rules (Org Pulse–aligned)
-    output-contract.md   # Structured block for the optional invoker
 ```
