@@ -570,6 +570,50 @@ class TestDescriptionCriterionCheck:
         assert result.passed
         assert "2 engineering" in result.details
 
+    def test_single_eng_component_fails_cross_team_deps(self):
+        """Blast-radius path: one eng component, no epic label, no deps language."""
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}],
+                "description": "Plain feature narrative with no dependency language.",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "found 1 eng component" in result.details
+
+    def test_non_eng_components_do_not_count_toward_cross_team_shortcut(self):
+        """UXD / Documentation / Docs must not inflate eng count for ≥2 shortcut."""
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [
+                    {"name": "Dashboard"},
+                    {"name": "UXD"},
+                    {"name": "Documentation"},
+                ],
+                "description": "Plain feature narrative with no dependency language.",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "found 1 eng component" in result.details
+
     def test_epic_creator_shortcut(self):
         checks = instantiate_checks([
             {"name": "has_cross_team_deps", "type": "description_criterion",

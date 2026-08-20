@@ -96,7 +96,8 @@ class TestLoadConfig:
 
     def test_fpdor_phase1_checks_configured(self):
         config = load_config()
-        names = {c["name"]: c["type"] for c in config["checks"]["hard_checks"]}
+        hard = config["checks"]["hard_checks"]
+        names = {c["name"]: c["type"] for c in hard}
         assert names["has_pm"] == "field_present"
         assert names["has_delivery_owner"] == "field_present"
         assert names["has_rubric_pass"] == "label_present"
@@ -104,12 +105,16 @@ class TestLoadConfig:
         assert names["has_child_epics"] == "has_child_epics"
         assert names["has_requirements_clarity"] == "description_criterion"
         assert names["has_acceptance_criteria"] == "description_criterion"
+        assert names["has_risks_assumptions"] == "description_criterion"
+        assert names["has_architectural_alignment"] == "description_criterion"
+        assert names["has_uxd_description"] == "description_criterion"
         assert names["has_cross_team_deps"] == "description_criterion"
         assert "has_docs_required" not in names
-        child_cfg = next(
-            c for c in config["checks"]["hard_checks"]
-            if c["name"] == "has_child_epics"
-        )
+        by_name = {c["name"]: c for c in hard}
+        assert by_name["has_uxd_description"].get("accept_uxd_component") is True
+        assert by_name["has_cross_team_deps"].get("accept_multi_eng_components") is True
+        assert by_name["has_cross_team_deps"].get("accept_epic_creator_label") is True
+        child_cfg = by_name["has_child_epics"]
         assert "RHOAIENG" in child_cfg["engineering_projects"]
         assert "INFERENG" in child_cfg["engineering_projects"]
         assert "RHAI" in child_cfg["engineering_projects"]
