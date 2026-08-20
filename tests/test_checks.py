@@ -83,6 +83,16 @@ class TestComputeVerdict:
         ]
         assert compute_verdict(results) == "error"
 
+    def test_not_applicable_does_not_fail(self):
+        results = [
+            CheckResult(name="a", passed=True, details="ok"),
+            CheckResult(
+                name="arch", passed=True, details="n/a",
+                not_applicable=True,
+            ),
+        ]
+        assert compute_verdict(results) == "pass"
+
 
 # --- FieldPresentCheck ---
 
@@ -513,6 +523,239 @@ class TestNewHardChecks:
         assert not checks[0].evaluate(issue).passed
 
 
+class TestDescriptionCriterionCheck:
+    def test_rubric_label_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_requirements_clarity", "type": "description_criterion",
+             "criterion": "requirements_clarity",
+             "label_shortcuts": ["strat-creator-rubric-pass"]},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {"labels": ["strat-creator-rubric-pass"]},
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "shortcut" in result.details
+
+    def test_human_sign_off_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_risks_assumptions", "type": "description_criterion",
+             "criterion": "risks_assumptions",
+             "label_shortcuts": [
+                 "strat-creator-rubric-pass",
+                 "strat-creator-human-sign-off",
+             ]},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {"labels": ["strat-creator-human-sign-off"]},
+        }
+        assert checks[0].evaluate(issue).passed
+
+    def test_multi_eng_components_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}, {"name": "Serving"}],
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "2 engineering" in result.details
+
+    def test_single_eng_component_fails_cross_team_deps(self):
+        """Blast-radius path: one eng component, no epic label, no deps language."""
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}],
+                "description": "Plain feature narrative with no dependency language.",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "found 1 eng component" in result.details
+
+    def test_non_eng_components_do_not_count_toward_cross_team_shortcut(self):
+        """UXD / Documentation / Docs must not inflate eng count for ≥2 shortcut."""
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "components": [
+                    {"name": "Dashboard"},
+                    {"name": "UXD"},
+                    {"name": "Documentation"},
+                ],
+                "description": "Plain feature narrative with no dependency language.",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert "found 1 eng component" in result.details
+
+    def test_epic_creator_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": ["epic-creator-auto-decomposed"],
+                "components": [{"name": "Dashboard"}],
+            },
+        }
+        assert checks[0].evaluate(issue).passed
+
+    def test_description_signals_pass_architecture_na(self):
+        checks = instantiate_checks([
+            {"name": "has_architectural_alignment",
+             "type": "description_criterion",
+             "criterion": "architectural_alignment"},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "description": (
+                    "Plain narrative with no architecture section or "
+                    "not-required phrase, long enough to count as content."
+                ),
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert result.not_applicable is True
+
+    def test_description_signals_fail_acceptance(self):
+        checks = instantiate_checks([
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "description": "This feature adds a new button to the toolbar",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert not result.not_applicable
+        assert not result.infra_error
+
+    def test_description_signals_pass_acceptance(self):
+        checks = instantiate_checks([
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {
+                "labels": [],
+                "description": "AC: The feature must support dark mode",
+            },
+        }
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert "description" in result.details.lower()
+
+    def test_empty_description_fails_hard_criteria(self):
+        checks = instantiate_checks([
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+        ])
+        issue = {"key": "RHAISTRAT-100", "fields": {"labels": []}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert result.infra_error is False
+
+    def test_uxd_component_shortcut(self):
+        checks = instantiate_checks([
+            {"name": "has_uxd_description", "type": "description_criterion",
+             "criterion": "uxd_description",
+             "accept_uxd_component": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-100",
+            "fields": {"labels": [], "components": [{"name": "UXD"}]},
+        }
+        assert checks[0].evaluate(issue).passed
+
+    def test_legacy_feature_passes_via_description_without_strat_labels(self):
+        """Legacy Features (no strat-creator-*) can pass via description signals."""
+        rich = """
+## Problem Statement
+Operators need a clearer way to manage model endpoints at scale.
+
+## Acceptance Criteria
+- Users can list endpoints
+- Users can filter by status
+
+## Risks and Assumptions
+- API may change upstream
+- Team capacity is limited
+
+## Technical Approach
+Event-driven control plane with documented ADR-12 boundaries.
+
+N/A – no UX for this API-only feature.
+
+This feature depends on Serving API v2 and is cross-team with Model Mesh.
+"""
+        checks = instantiate_checks([
+            {"name": "has_requirements_clarity", "type": "description_criterion",
+             "criterion": "requirements_clarity"},
+            {"name": "has_acceptance_criteria", "type": "description_criterion",
+             "criterion": "acceptance_criteria"},
+            {"name": "has_risks_assumptions", "type": "description_criterion",
+             "criterion": "risks_assumptions"},
+            {"name": "has_architectural_alignment",
+             "type": "description_criterion",
+             "criterion": "architectural_alignment"},
+            {"name": "has_uxd_description", "type": "description_criterion",
+             "criterion": "uxd_description",
+             "accept_uxd_component": True},
+            {"name": "has_cross_team_deps", "type": "description_criterion",
+             "criterion": "cross_team_deps_language",
+             "accept_epic_creator_label": True,
+             "accept_multi_eng_components": True},
+        ])
+        issue = {
+            "key": "RHAISTRAT-LEGACY",
+            "fields": {
+                "labels": [],
+                "components": [{"name": "Dashboard"}],
+                "description": rich,
+            },
+        }
+        results = [c.evaluate(issue) for c in checks]
+        assert compute_verdict(results) == "pass"
+        assert all(r.passed for r in results)
+
+
 # --- instantiate_checks with full config ---
 
 ALL_HARD_CHECKS = [
@@ -546,6 +789,31 @@ ALL_HARD_CHECKS = [
      "engineering_projects": [
          "RHOAIENG", "RHAIENG", "AIPCC", "INFERENG", "RHAI", "RHELAI",
      ]},
+    {"name": "has_requirements_clarity", "type": "description_criterion",
+     "criterion": "requirements_clarity",
+     "label_shortcuts": [
+         "strat-creator-rubric-pass", "strat-creator-human-sign-off",
+     ]},
+    {"name": "has_acceptance_criteria", "type": "description_criterion",
+     "criterion": "acceptance_criteria",
+     "label_shortcuts": ["strat-creator-rubric-pass"]},
+    {"name": "has_risks_assumptions", "type": "description_criterion",
+     "criterion": "risks_assumptions",
+     "label_shortcuts": [
+         "strat-creator-rubric-pass", "strat-creator-human-sign-off",
+     ]},
+    {"name": "has_architectural_alignment", "type": "description_criterion",
+     "criterion": "architectural_alignment",
+     "label_shortcuts": [
+         "strat-creator-rubric-pass", "strat-creator-human-sign-off",
+     ]},
+    {"name": "has_uxd_description", "type": "description_criterion",
+     "criterion": "uxd_description",
+     "accept_uxd_component": True},
+    {"name": "has_cross_team_deps", "type": "description_criterion",
+     "criterion": "cross_team_deps_language",
+     "accept_epic_creator_label": True,
+     "accept_multi_eng_components": True},
 ]
 
 FULL_PASSING_ISSUE = {
@@ -564,10 +832,15 @@ FULL_PASSING_ISSUE = {
             "strat-creator-human-sign-off",
             "strat-creator-rubric-pass",
         ],
-        "components": [{"name": "Dashboard"}, {"name": "Documentation"}],
+        "components": [
+            {"name": "Dashboard"},
+            {"name": "Serving"},
+            {"name": "UXD"},
+            {"name": "Documentation"},
+        ],
         "customfield_10851": {"value": "Tech Preview"},
         "customfield_10665": {"value": "Yes"},
-        "customfield_10855": [{"name": "rhoai-3.5"}],
+        "customfield_10855": [{"name": "3.5"}],
     },
     "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
 }
@@ -607,7 +880,7 @@ class TestInstantiateChecks:
         """Issue with all required fields passes all hard checks."""
         checks = instantiate_checks(ALL_HARD_CHECKS)
         results = [c.evaluate(FULL_PASSING_ISSUE) for c in checks]
-        assert len(results) == 11
+        assert len(results) == 17
         assert compute_verdict(results) == "pass"
         assert all(r.passed for r in results)
 

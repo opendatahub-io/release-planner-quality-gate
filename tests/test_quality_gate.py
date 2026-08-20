@@ -96,21 +96,30 @@ class TestLoadConfig:
 
     def test_fpdor_phase1_checks_configured(self):
         config = load_config()
-        names = {c["name"]: c["type"] for c in config["checks"]["hard_checks"]}
+        hard = config["checks"]["hard_checks"]
+        names = {c["name"]: c["type"] for c in hard}
         assert names["has_pm"] == "field_present"
         assert names["has_delivery_owner"] == "field_present"
         assert names["has_rubric_pass"] == "label_present"
         assert names["has_docs_impact"] == "docs_impact"
         assert names["has_child_epics"] == "has_child_epics"
+        assert names["has_requirements_clarity"] == "description_criterion"
+        assert names["has_acceptance_criteria"] == "description_criterion"
+        assert names["has_risks_assumptions"] == "description_criterion"
+        assert names["has_architectural_alignment"] == "description_criterion"
+        assert names["has_uxd_description"] == "description_criterion"
+        assert names["has_cross_team_deps"] == "description_criterion"
         assert "has_docs_required" not in names
-        child_cfg = next(
-            c for c in config["checks"]["hard_checks"]
-            if c["name"] == "has_child_epics"
-        )
+        by_name = {c["name"]: c for c in hard}
+        assert by_name["has_uxd_description"].get("accept_uxd_component") is True
+        assert by_name["has_cross_team_deps"].get("accept_multi_eng_components") is True
+        assert by_name["has_cross_team_deps"].get("accept_epic_creator_label") is True
+        child_cfg = by_name["has_child_epics"]
         assert "RHOAIENG" in child_cfg["engineering_projects"]
         assert "INFERENG" in child_cfg["engineering_projects"]
         assert "RHAI" in child_cfg["engineering_projects"]
         assert "RHELAI" in child_cfg["engineering_projects"]
+        assert "description_scorer" not in config
 
     def test_discovery_does_not_skip_prior_passes(self):
         """rp-qg1-pass must stay in scope so criteria changes revalidate."""
@@ -150,6 +159,7 @@ class TestCollectRequiredFields:
         assert "assignee" in fields
         assert "customfield_10665" in fields  # docs required
         assert "components" in fields
+        assert "description" in fields
 
 
 # --- evaluate_issue ---
@@ -468,3 +478,35 @@ class TestEnrichIssuesWithChildEpics:
             {"key": "X", "_child_epics": [{"key": "E-1"}]}, cfg) is False
         assert should_suppress_gate_write(
             {"key": "X"}, {"checks": {"hard_checks": []}}) is False
+
+    def test_description_failures_do_not_suppress_writes(self):
+        """Description criteria use the scanner; content fails are not infra."""
+        from scripts.quality_gate import should_suppress_gate_write
+        cfg = {
+            "checks": {
+                "hard_checks": [
+                    {
+                        "name": "has_acceptance_criteria",
+                        "type": "description_criterion",
+                        "criterion": "acceptance_criteria",
+                    },
+                    *self._child_config()["checks"]["hard_checks"],
+                ],
+            },
+        }
+        # Child epics loaded; empty/missing description is a normal fail path.
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}],
+             "fields": {"description": ""}},
+            cfg,
+        ) is False
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}],
+             "fields": {"description": "AC: must work"}},
+            cfg,
+        ) is False
+        # Jira may omit description entirely from fields.
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}], "fields": {}},
+            cfg,
+        ) is False

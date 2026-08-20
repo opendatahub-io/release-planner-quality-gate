@@ -28,12 +28,14 @@ from scripts.jira_utils import (
     fetch_child_epics_by_parent,
     DEFAULT_ENGINEERING_PROJECTS,
 )
-from scripts.checks.hard_checks import CHILD_EPICS_ATTR, preview_child_keys
+from scripts.checks.hard_checks import (
+    CHILD_EPICS_ATTR,
+    preview_child_keys,
+)
 from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
-
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "pipeline-settings.yaml"
@@ -83,6 +85,10 @@ def collect_required_fields(config):
         if docs_field:
             fields.add(docs_field)
             fields.add("components")
+        if check_cfg.get("type") == "description_criterion":
+            fields.add("labels")
+            fields.add("components")
+            fields.add("description")
     rice = config.get("rice_fields", {})
     for field_id in rice.values():
         fields.add(field_id)
@@ -149,14 +155,14 @@ def enrich_issues_with_child_epics(issues, config, server, user, token):
 
 
 def should_suppress_gate_write(issue, config):
-    """True when child-Epic enrichment failed for a configured check.
+    """True when required enrichment failed (infra) — leave Jira labels alone.
 
-    Empty list (no children) is a content failure and must still write.
-    Missing / None data is an infrastructure gap — leave Jira labels alone.
+    Empty child-epic list is a content failure and must still write.
+    Missing / None enrichment data is an infrastructure gap.
     """
-    if not _child_epics_check_config(config):
-        return False
-    return issue.get(CHILD_EPICS_ATTR) is None
+    if _child_epics_check_config(config) and issue.get(CHILD_EPICS_ATTR) is None:
+        return True
+    return False
 
 
 def evaluate_issue(issue, checks):
@@ -166,7 +172,13 @@ def evaluate_issue(issue, checks):
 
 def apply_verdict_label(server, user, token, issue_key, current_labels,
                         verdict, label_config):
-    """Apply pass/fail label based on verdict. Atomic swap."""
+    """Apply pass/fail label based on verdict. Atomic swap.
+
+    Infrastructure ``error`` verdicts leave labels unchanged.
+    """
+    if verdict == "error":
+        return
+
     pass_label = label_config["gate_pass"]
     fail_label = label_config["gate_fail"]
 
@@ -201,6 +213,12 @@ CHECK_LABELS = {
     "has_docs_required": "Product Docs Required",  # legacy alias
     "has_target_version": "Target Version",
     "has_child_epics": "Child Epics",
+    "has_requirements_clarity": "Requirements Clarity",
+    "has_acceptance_criteria": "Acceptance Criteria",
+    "has_risks_assumptions": "Risks & Assumptions",
+    "has_architectural_alignment": "Architectural Alignment",
+    "has_uxd_description": "UXD (description)",
+    "has_cross_team_deps": "Cross-team Dependencies",
 }
 
 FIELD_FRIENDLY_NAMES = {
@@ -290,8 +308,14 @@ def compute_checks_version(hard_checks_config):
 def build_gate_comment(issue, check_results, verdict, label_config,
                        checks_version=""):
     """Build a deterministic gate result comment in markdown."""
-    status = "PASS" if verdict == "pass" else "FAIL"
-    label = label_config["gate_pass"] if verdict == "pass" else label_config["gate_fail"]
+    status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
+        verdict, "FAIL")
+    if verdict == "pass":
+        label = label_config["gate_pass"]
+    elif verdict == "fail":
+        label = label_config["gate_fail"]
+    else:
+        label = "unchanged (infrastructure error)"
 
     lines = [
         f"**Release Quality Gate 1: Feature Definition of Ready for Planning — {status}**",
@@ -300,8 +324,13 @@ def build_gate_comment(issue, check_results, verdict, label_config,
 
     if verdict == "pass":
         lines.append("All hard checks passed for this feature.")
+    elif verdict == "error":
+        lines.append("Evaluation incomplete due to infrastructure errors.")
     else:
-        failed = [r for r in check_results if not r.passed]
+        failed = [
+            r for r in check_results
+            if not r.passed and not r.not_applicable and not r.infra_error
+        ]
         lines.append(f"{len(failed)} check(s) failed.")
     lines.append("")
 
@@ -314,10 +343,19 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         check_label = CHECK_LABELS.get(r.name, r.name)
         if r.name == "has_rice" and has_auto_rice:
             check_label = "RICE Score (Auto-generated)"
-        status_icon = "PASS" if r.passed else "FAIL"
-        if r.passed:
+        if r.not_applicable:
+            status_icon = "N/A"
+            detail = r.details
+        elif r.infra_error:
+            status_icon = "ERROR"
+            detail = r.details
+        elif r.passed:
+            status_icon = "PASS"
             detail = _extract_field_detail(issue, r.name)
+            if detail == "?" and r.details:
+                detail = r.details
         else:
+            status_icon = "FAIL"
             detail = _friendly_fail_details(r.details)
         lines.append(f"| {check_label} | {status_icon} | {detail} |")
 
@@ -355,8 +393,19 @@ def compute_result_fingerprint(check_results, verdict, checks_version=""):
         "checks": [
             {
                 "name": r.name,
-                "status": "pass" if r.passed else "fail",
-                "detail": "ok" if r.passed else _friendly_fail_details(r.details),
+                "status": (
+                    "na" if r.not_applicable
+                    else "error" if r.infra_error
+                    else "pass" if r.passed
+                    else "fail"
+                ),
+                # Verdict only — do not hash free-text evidence/details.
+                "detail": (
+                    "na" if r.not_applicable
+                    else "error" if r.infra_error
+                    else "ok" if r.passed
+                    else "fail"
+                ),
             }
             for r in check_results
         ],
@@ -378,7 +427,12 @@ def extract_fingerprint(comment_text):
 
 
 def labels_match_verdict(current_labels, verdict, label_config):
-    """True when pass/fail labels already match the verdict (no swap needed)."""
+    """True when pass/fail labels already match the verdict (no swap needed).
+
+    ``error`` never matches — callers must not treat infra errors as fail.
+    """
+    if verdict == "error":
+        return False
     pass_label = label_config["gate_pass"]
     fail_label = label_config["gate_fail"]
     labels = current_labels or []
@@ -489,12 +543,16 @@ def write_issue_gate_result(server, user, token, issue, results, label_config,
                             checks_version=""):
     """Apply labels + gate comment for one issue.
 
-    Returns "skipped" when fingerprint/labels are unchanged, else "written".
+    Returns "skipped" when fingerprint/labels are unchanged or when the
+    verdict is an infrastructure ``error`` (labels must stay unchanged),
+    else "written".
     """
     from scripts.jira_utils import get_comments
 
     key = issue["key"]
     verdict = compute_verdict(results)
+    if verdict == "error":
+        return "skipped"
     current_labels = issue.get("fields", {}).get("labels", [])
     new_fp = compute_result_fingerprint(results, verdict, checks_version)
     # One comment-list fetch; only trust fingerprints from bot-authored comments.
@@ -548,6 +606,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
                     "details": r.details,
                     "auto_fixable": r.auto_fixable,
                     "infra_error": r.infra_error,
+                    "not_applicable": r.not_applicable,
                 }
                 for r in results
             },
@@ -587,9 +646,14 @@ def print_summary(results_by_issue):
     print(f"{'-'*70}")
     for key, results in results_by_issue.items():
         verdict = compute_verdict(results)
-        failed = [r for r in results if not r.passed]
+        failed = [
+            r for r in results
+            if not r.passed and not r.not_applicable
+        ]
         if failed:
             details = "; ".join(f"{r.name}: {r.details}" for r in failed)
+        elif any(r.not_applicable for r in results):
+            details = "all applicable checks passed"
         else:
             details = "all checks passed"
         status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
@@ -681,7 +745,9 @@ def main(argv=None):
                     file=sys.stderr,
                 )
 
-        # Re-fetch and re-evaluate issues that got RICE written
+        # Re-fetch and re-evaluate issues that got RICE written.
+        # Description signals are deterministic from the description field;
+        # do not re-scan after RICE (RICE does not change description).
         if rice_written:
             print(f"\nRe-evaluating {len(rice_written)} RICE'd issues...")
             refetched = []
@@ -730,10 +796,14 @@ def main(argv=None):
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
-            if should_suppress_gate_write(issue, config):
+            suppress = should_suppress_gate_write(issue, config)
+            if suppress or verdict == "error":
+                reason = (
+                    "child Epic enrichment failed" if suppress
+                    else "infrastructure error"
+                )
                 print(
-                    f"  {key}: skip write (child Epic enrichment failed; "
-                    f"labels unchanged)",
+                    f"  {key}: skip write ({reason}; labels unchanged)",
                     file=sys.stderr,
                 )
                 continue

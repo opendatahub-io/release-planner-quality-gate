@@ -110,6 +110,36 @@ class TestWriteIssueGateResult:
         assert write_issue_gate_result(
             "s", "u", "t", issue, results, LABEL_CONFIG) == "skipped"
 
+
+    def test_error_verdict_skips_without_label_or_comment(self, monkeypatch):
+        results = [
+            CheckResult(
+                "has_child_epics", False, "lookup failed", infra_error=True),
+        ]
+        issue = {"key": "RHAISTRAT-1", "fields": {"labels": ["rp-qg1-pass"]}}
+        calls = {"label": 0, "comment": 0}
+
+        monkeypatch.setattr(
+            "scripts.jira_utils.get_comments",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                AssertionError("should not fetch comments on error")),
+        )
+
+        def boom_label(*_a, **_k):
+            calls["label"] += 1
+
+        def boom_comment(*_a, **_k):
+            calls["comment"] += 1
+
+        monkeypatch.setattr(
+            "scripts.quality_gate.apply_verdict_label", boom_label)
+        monkeypatch.setattr(
+            "scripts.quality_gate.post_gate_comment", boom_comment)
+
+        assert write_issue_gate_result(
+            "s", "u", "t", issue, results, LABEL_CONFIG) == "skipped"
+        assert calls == {"label": 0, "comment": 0}
+
     def test_written_applies_label_and_comment(self, monkeypatch):
         calls = []
         results = [CheckResult("has_rice", True, "ok")]
