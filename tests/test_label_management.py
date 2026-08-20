@@ -51,6 +51,14 @@ class TestApplyVerdictLabel:
         assert "rp-qg1-fail" in fake_jira.added
         assert fake_jira.removed == []
 
+    def test_error_verdict_leaves_labels_unchanged(self, fake_jira):
+        apply_verdict_label(
+            "s", "u", "t", "RHAISTRAT-100",
+            current_labels=["rp-qg1-pass"], verdict="error",
+            label_config=LABEL_CONFIG)
+        assert fake_jira.added == []
+        assert fake_jira.removed == []
+
     def test_fail_to_pass_swaps(self, fake_jira):
         apply_verdict_label(
             "s", "u", "t", "RHAISTRAT-100",

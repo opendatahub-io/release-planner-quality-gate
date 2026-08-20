@@ -505,3 +505,8 @@ class TestEnrichIssuesWithChildEpics:
              "fields": {"description": "AC: must work"}},
             cfg,
         ) is False
+        # Jira may omit description entirely from fields.
+        assert should_suppress_gate_write(
+            {"key": "X", "_child_epics": [{"key": "E-1"}], "fields": {}},
+            cfg,
+        ) is False

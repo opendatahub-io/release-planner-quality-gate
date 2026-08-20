@@ -131,9 +131,32 @@ class TestFingerprint:
         assert compute_result_fingerprint([err_a], "error", "v1") == (
             compute_result_fingerprint([err_b], "error", "v1")
         )
-        assert compute_result_fingerprint([na_a], "pass", "v1") != (
-            compute_result_fingerprint([err_a], "error", "v1")
+        # Isolate per-check status from top-level verdict.
+        normal_pass = CheckResult(
+            "has_architectural_alignment", True,
+            "Not checked — no architecture notes",
         )
+        assert compute_result_fingerprint([na_a], "pass", "v1") != (
+            compute_result_fingerprint([normal_pass], "pass", "v1")
+        )
+        normal_fail = CheckResult(
+            "has_child_epics", False, "lookup failed: timeout",
+        )
+        assert compute_result_fingerprint([err_a], "error", "v1") != (
+            compute_result_fingerprint([normal_fail], "error", "v1")
+        )
+
+
+    def test_error_comment_does_not_claim_fail_label(self):
+        issue = {"fields": {"labels": []}}
+        results = [
+            CheckResult(
+                "has_child_epics", False, "lookup failed", infra_error=True),
+        ]
+        md = build_gate_comment(issue, results, "error", LABEL_CONFIG)
+        assert "— ERROR**" in md
+        assert "Label applied: unchanged (infrastructure error)" in md
+        assert "rp-qg1-fail" not in md
 
 
 class TestChecksVersion:

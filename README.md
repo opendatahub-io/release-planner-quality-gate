@@ -24,7 +24,7 @@ The Python orchestrator (`quality_gate.py`) handles all deterministic logic: JQL
 - `/rice-score` — RICE recommendations when scores are missing
 - Description FPDoR criteria — **deterministic scanner** (`description_signals.py`, Org Pulse port) plus label/field shortcuts. CI does **not** call Claude for description checks.
 
-```
+```text
 quality_gate.py          →  JQL discovery, check evaluation, label management
   ├── checks/            →  Pluggable check framework (field_present, label_present, …)
   ├── description_signals.py → Org Pulse description-scanner port (no Claude)

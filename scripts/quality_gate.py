@@ -172,7 +172,13 @@ def evaluate_issue(issue, checks):
 
 def apply_verdict_label(server, user, token, issue_key, current_labels,
                         verdict, label_config):
-    """Apply pass/fail label based on verdict. Atomic swap."""
+    """Apply pass/fail label based on verdict. Atomic swap.
+
+    Infrastructure ``error`` verdicts leave labels unchanged.
+    """
+    if verdict == "error":
+        return
+
     pass_label = label_config["gate_pass"]
     fail_label = label_config["gate_fail"]
 
@@ -302,8 +308,14 @@ def compute_checks_version(hard_checks_config):
 def build_gate_comment(issue, check_results, verdict, label_config,
                        checks_version=""):
     """Build a deterministic gate result comment in markdown."""
-    status = "PASS" if verdict == "pass" else "FAIL"
-    label = label_config["gate_pass"] if verdict == "pass" else label_config["gate_fail"]
+    status = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}.get(
+        verdict, "FAIL")
+    if verdict == "pass":
+        label = label_config["gate_pass"]
+    elif verdict == "fail":
+        label = label_config["gate_fail"]
+    else:
+        label = "unchanged (infrastructure error)"
 
     lines = [
         f"**Release Quality Gate 1: Feature Definition of Ready for Planning — {status}**",
@@ -415,7 +427,12 @@ def extract_fingerprint(comment_text):
 
 
 def labels_match_verdict(current_labels, verdict, label_config):
-    """True when pass/fail labels already match the verdict (no swap needed)."""
+    """True when pass/fail labels already match the verdict (no swap needed).
+
+    ``error`` never matches — callers must not treat infra errors as fail.
+    """
+    if verdict == "error":
+        return False
     pass_label = label_config["gate_pass"]
     fail_label = label_config["gate_fail"]
     labels = current_labels or []
@@ -526,12 +543,16 @@ def write_issue_gate_result(server, user, token, issue, results, label_config,
                             checks_version=""):
     """Apply labels + gate comment for one issue.
 
-    Returns "skipped" when fingerprint/labels are unchanged, else "written".
+    Returns "skipped" when fingerprint/labels are unchanged or when the
+    verdict is an infrastructure ``error`` (labels must stay unchanged),
+    else "written".
     """
     from scripts.jira_utils import get_comments
 
     key = issue["key"]
     verdict = compute_verdict(results)
+    if verdict == "error":
+        return "skipped"
     current_labels = issue.get("fields", {}).get("labels", [])
     new_fp = compute_result_fingerprint(results, verdict, checks_version)
     # One comment-list fetch; only trust fingerprints from bot-authored comments.
@@ -775,10 +796,14 @@ def main(argv=None):
             key = issue["key"]
             results = results_by_issue[key]
             verdict = compute_verdict(results)
-            if should_suppress_gate_write(issue, config):
+            suppress = should_suppress_gate_write(issue, config)
+            if suppress or verdict == "error":
+                reason = (
+                    "child Epic enrichment failed" if suppress
+                    else "infrastructure error"
+                )
                 print(
-                    f"  {key}: skip write (child Epic enrichment failed; "
-                    f"labels unchanged)",
+                    f"  {key}: skip write ({reason}; labels unchanged)",
                     file=sys.stderr,
                 )
                 continue
