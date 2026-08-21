@@ -21,11 +21,15 @@ Discovery matches Org Pulse / Product Pages planning population:
 
 Further filters:
 
-- **Target Version** (`cf[10855]`): cycles from `config/release-calendar.json` whose **code freeze is still in the future** (inclusive of today), expanded to Jira picklist names like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`)
+- **Target Version** (`cf[10855]`): events from `config/release-calendar.json` whose own **`codeFreeze` is still in the future** (inclusive of today). QG1 intentionally uses `codeFreeze`, not `planningFreeze`, as the discovery cutoff. Already-frozen events (e.g. EA1 after its freeze) are omitted even when later events in the same cycle remain open. Names expand to Jira picklist values like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`). Empty resolution **fail-closes** (never-match TV clause) instead of omitting the filter.
 - **Status**: not Closed, Resolved, or Cancelled
 - **Not** filtered on `strat-creator-human-sign-off` — that label is an AI First hard check, not a discovery prerequisite
 
+**RHAISTRAT Initiatives** are in scope by design and run the same Feature FPDoR hard checks (RICE, child Epics, docs, description criteria, …).
+
 Legacy Features (no `strat-creator-*` labels) stay in scope. Sign-off and rubric checks are marked N/A for them so they do not false-fail. Description FPDoR criteria also accept Legacy Features via description text (no Claude), matching Org Pulse.
+
+Batch auto-RICE is capped (`rice_scorer.max_auto_fix`, default 25) so the larger discovery population cannot spawn unbounded sequential Claude calls.
 
 ## Architecture
 

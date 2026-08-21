@@ -63,12 +63,27 @@ def _scope_clause(scope: dict) -> str:
     return f"(project = {project} AND {type_clause})"
 
 
+# Sentinel so empty calendar/TV resolution cannot scan the whole backlog.
+_NO_TV_SENTINEL = "__qg1-no-discovery-target-versions__"
+
+
+def _requires_target_version_clause(jql_cfg: dict) -> bool:
+    """True when discovery must constrain Target Version (fail closed)."""
+    if jql_cfg.get("target_versions"):
+        return True
+    return bool(jql_cfg.get("target_versions_from_calendar", True))
+
+
 def build_jql(config, as_of=None):
     """Build discovery JQL from pipeline-settings config.
 
     Supports either legacy ``jql.project`` or multi-scope ``jql.scopes``.
     Target versions come from explicit ``target_versions`` or the release
-    calendar (bare ``3.*`` names with a future code freeze).
+    calendar (per-event future ``codeFreeze``).
+
+    When calendar/explicit TV resolution is enabled but yields no names,
+    JQL uses a never-match Target Version clause (fail closed) instead of
+    omitting the filter and scanning the whole backlog.
     """
     jql_cfg = config["jql"]
     scopes = jql_cfg.get("scopes")
@@ -85,6 +100,8 @@ def build_jql(config, as_of=None):
     if versions:
         version_list = ", ".join(f'"{v}"' for v in versions)
         clauses.append(f"cf[10855] IN ({version_list})")
+    elif _requires_target_version_clause(jql_cfg):
+        clauses.append(f'cf[10855] = "{_NO_TV_SENTINEL}"')
 
     excluded = jql_cfg.get("excluded_statuses") or []
     if excluded:
@@ -744,16 +761,24 @@ def main(argv=None):
         results = evaluate_issue(issue, checks)
         results_by_issue[key] = results
 
-    # Auto-fix: generate RICE for issues missing it
+    # Auto-fix: generate RICE for issues missing it (capped per batch).
     needs_rice = [
         key for key, results in results_by_issue.items()
         if any(r.name == "has_rice" and not r.passed and r.auto_fixable
                for r in results)
     ]
+    rice_cfg = config.get("rice_scorer") or {}
+    max_auto = rice_cfg.get("max_auto_fix")
+    if max_auto is not None and len(needs_rice) > int(max_auto):
+        print(
+            f"\nAuto-RICE capped at {max_auto} of {len(needs_rice)} "
+            f"missing-RICE issue(s); remainder stay fail until a later run."
+        )
+        needs_rice = needs_rice[: int(max_auto)]
 
     rice_generated = {}
     if needs_rice:
-        timeout = config.get("rice_scorer", {}).get("timeout_seconds", 300)
+        timeout = rice_cfg.get("timeout_seconds", 300)
         print(f"\nGenerating RICE for {len(needs_rice)} issue(s)...")
         rice_result = generate_rice_scores(needs_rice, timeout=timeout)
 

@@ -5,6 +5,8 @@
 # names from config/release-calendar.json). Human sign-off is an AI First
 # hard check — not a discovery filter.
 jql:
+  # Initiatives intentionally get the same Feature FPDoR hard checks
+  # (RICE, child Epics, docs, description criteria, …).
   scopes:
     - project: RHAISTRAT
       issuetypes: [Feature, Initiative]
@@ -15,8 +17,10 @@ jql:
     - Closed
     - Resolved
     - Cancelled
-  # Prefer calendar-derived cycles (bare 3.* with a future code freeze),
-  # expanded to Jira picklist names like "3.6 EA1 RHOAI RELEASE".
+  # Prefer calendar-derived Target Versions: each event whose own codeFreeze
+  # is still in the future (not planningFreeze), expanded to Jira picklist
+  # names like "3.6 EA1 RHOAI RELEASE". Already-frozen events are omitted.
+  # Empty resolution fail-closes (never-match TV clause), not open backlog.
   # Set target_versions explicitly to override (bare 3.* or full picklist
   # names; obsolete rhoai-3.x names are rejected).
   target_versions_from_calendar: true
@@ -160,6 +164,9 @@ checks:
 # RICE scorer configuration
 rice_scorer:
   timeout_seconds: 300
+  # Cap sequential Claude auto-RICE calls per batch (expanded discovery
+  # can leave hundreds of tickets without Reach). Remainder stay fail.
+  max_auto_fix: 25
   calibration_jql: >-
     project = RHAISTRAT
     AND labels = "strat-creator-human-sign-off"

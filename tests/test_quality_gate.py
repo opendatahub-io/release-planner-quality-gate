@@ -75,6 +75,28 @@ class TestBuildJql:
         assert 'labels != "rp-qg1-pass"' in jql
         assert 'labels != "rp-qg1-skip"' in jql
 
+    def test_empty_future_freeze_list_fail_closes_target_version(self, tmp_path):
+        """Stale calendar must not omit cf[10855] and scan the whole backlog."""
+        from datetime import date
+
+        calendar_path = tmp_path / "cal.json"
+        calendar_path.write_text(
+            '{"events":[{"version":"3.0","event":"GA","codeFreeze":"2020-01-01"}]}'
+        )
+        config = {
+            "jql": {
+                "scopes": [
+                    {"project": "RHAISTRAT", "issuetypes": ["Feature"]},
+                ],
+                "excluded_statuses": ["Closed"],
+                "target_versions_from_calendar": True,
+                "calendar_path": str(calendar_path),
+            }
+        }
+        jql = build_jql(config, as_of=date(2026, 8, 21))
+        assert "cf[10855]" in jql
+        assert "__qg1-no-discovery-target-versions__" in jql
+
     def test_multi_scope_population_and_calendar_versions(self, tmp_path):
         calendar_path = tmp_path / "cal.json"
         calendar_path.write_text(

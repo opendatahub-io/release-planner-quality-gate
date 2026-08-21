@@ -2,6 +2,7 @@
 from datetime import date
 
 from scripts.release_calendar import (
+    expand_jira_names_for_future_events,
     expand_jira_target_version_names,
     is_obsolete_version_name,
     resolve_discovery_target_versions,
@@ -110,6 +111,25 @@ class TestExpandJiraTargetVersionNames:
         # SAMPLE_CALENDAR has no 3.5 EA2 row
         assert "3.5 EA2 RHOAI RELEASE" not in names
 
+    def test_as_of_filters_already_frozen_events(self):
+        # Day after 3.6 EA1 freeze: EA1 omitted; EA2/GA kept.
+        names = expand_jira_target_version_names(
+            ["3.6"], SAMPLE_CALENDAR, as_of=date(2026, 8, 22)
+        )
+        assert "3.6 EA1 RHOAI RELEASE" not in names
+        assert "3.6 EA2 RHOAI RELEASE" in names
+        assert "3.6 GA RHOAI RELEASE" in names
+
+
+class TestExpandJiraNamesForFutureEvents:
+    def test_omits_frozen_events_within_open_cycle(self):
+        names = expand_jira_names_for_future_events(
+            SAMPLE_CALENDAR, as_of=date(2026, 8, 22)
+        )
+        assert "3.6 EA1 RHOAI RELEASE" not in names
+        assert "3.6 EA2 RHOAI RELEASE" in names
+        assert "3.6.1 GA RHOAI RELEASE" in names
+
 
 class TestResolveDiscoveryTargetVersions:
     def test_explicit_bare_versions_expand(self, tmp_path):
@@ -152,6 +172,39 @@ class TestResolveDiscoveryTargetVersions:
             }
         }
         assert resolve_discovery_target_versions(config) == []
+
+    def test_missing_calendar_file_raises(self, tmp_path):
+        config = {
+            "jql": {
+                "target_versions_from_calendar": True,
+                "calendar_path": str(tmp_path / "missing.json"),
+            }
+        }
+        try:
+            resolve_discovery_target_versions(config)
+            raise AssertionError("expected FileNotFoundError")
+        except FileNotFoundError:
+            pass
+
+    def test_calendar_path_omits_frozen_events(self, tmp_path):
+        calendar_path = tmp_path / "cal.json"
+        calendar_path.write_text(
+            '{"events":['
+            '{"version":"3.6","event":"EA1","codeFreeze":"2026-08-21"},'
+            '{"version":"3.6","event":"EA2","codeFreeze":"2026-09-18"}'
+            ']}'
+        )
+        config = {
+            "jql": {
+                "target_versions_from_calendar": True,
+                "calendar_path": str(calendar_path),
+            }
+        }
+        names = resolve_discovery_target_versions(
+            config, as_of=date(2026, 8, 22)
+        )
+        assert "3.6 EA1 RHOAI RELEASE" not in names
+        assert "3.6 EA2 RHOAI RELEASE" in names
 
     def test_loads_repo_calendar_when_enabled(self, tmp_path):
         calendar_path = tmp_path / "cal.json"

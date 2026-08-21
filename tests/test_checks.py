@@ -814,8 +814,10 @@ ALL_HARD_CHECKS = [
     {"name": "has_delivery_owner", "type": "field_present",
      "fields": ["assignee"]},
     {"name": "has_sign_off", "type": "label_present",
+     "ai_first_only": True,
      "labels": ["strat-creator-human-sign-off"]},
     {"name": "has_rubric_pass", "type": "label_present",
+     "ai_first_only": True,
      "labels": ["strat-creator-rubric-pass"]},
     {"name": "has_components", "type": "field_present", "fields": ["components"]},
     {"name": "has_release_type", "type": "field_present",
@@ -886,6 +888,34 @@ FULL_PASSING_ISSUE = {
 }
 
 
+LEGACY_PASSING_ISSUE = {
+    "key": "AIPCC-LEGACY",
+    "fields": {
+        "customfield_10862": 8,
+        "customfield_10836": 5,
+        "customfield_10838": {"id": "16144"},
+        "customfield_10637": 3,
+        "priority": {"name": "Critical"},
+        "customfield_10469": {
+            "accountId": "pm-1", "displayName": "Pat Product"},
+        "assignee": {
+            "accountId": "eng-1", "displayName": "Dev Owner"},
+        "labels": [],
+        "components": [
+            {"name": "Dashboard"},
+            {"name": "Serving"},
+            {"name": "UXD"},
+            {"name": "Documentation"},
+        ],
+        "customfield_10851": {"value": "Tech Preview"},
+        "customfield_10665": {"value": "Yes"},
+        "customfield_10855": [{"name": "3.6 EA1 RHOAI RELEASE"}],
+        "description": """## Problem Statement\nOperators need a clearer way to manage model endpoints at scale.\n\n## Acceptance Criteria\n- Users can list endpoints\n- Users can filter by status\n\n## Risks and Assumptions\n- API may change upstream\n\n## Technical Approach\nEvent-driven control plane with documented ADR-12 boundaries.\n\nN/A – no UX for this API-only feature.\n\nThis feature depends on Serving API v2 and is cross-team with Model Mesh.\n""",
+    },
+    "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
+}
+
+
 class TestInstantiateChecks:
     def test_pipeline_settings_checks(self):
         """Instantiate the full hard_checks config from pipeline-settings."""
@@ -921,6 +951,17 @@ class TestInstantiateChecks:
         checks = instantiate_checks(ALL_HARD_CHECKS)
         results = [c.evaluate(FULL_PASSING_ISSUE) for c in checks]
         assert len(results) == 17
+        assert compute_verdict(results) == "pass"
+        assert all(r.passed for r in results)
+
+    def test_legacy_feature_full_hard_checks_pass(self):
+        """Legacy Features (no strat-creator-*) pass via ai_first_only N/A + description."""
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        results = [c.evaluate(LEGACY_PASSING_ISSUE) for c in checks]
+        assert len(results) == 17
+        by_name = {r.name: r for r in results}
+        assert by_name["has_sign_off"].not_applicable is True
+        assert by_name["has_rubric_pass"].not_applicable is True
         assert compute_verdict(results) == "pass"
         assert all(r.passed for r in results)
 
