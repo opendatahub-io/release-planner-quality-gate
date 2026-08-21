@@ -21,7 +21,7 @@ Discovery matches Org Pulse / Product Pages planning population:
 
 Further filters:
 
-- **Target Version** (`cf[10855]`): events from `config/release-calendar.json` whose own **`codeFreeze` is still in the future** (inclusive of today). QG1 intentionally uses `codeFreeze`, not `planningFreeze`, as the discovery cutoff. Already-frozen events (e.g. EA1 after its freeze) are omitted even when later events in the same cycle remain open. Names expand to Jira picklist values like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`). Empty resolution **fail-closes** (never-match TV clause) instead of omitting the filter.
+- **Target Version** (`cf[10855]`): events from `config/release-calendar.json` whose own **`codeFreeze` is still in the future** (inclusive of today). QG1 uses `codeFreeze`, not `planningFreeze`, on purpose: planning freeze locks scope for the planning conversation; code freeze is when that event stops taking new work. A Feature with that Target Version remains a release candidate — and still needs QG1 readiness checks — until code freeze. Cutting discovery at planning freeze would drop Features from the gate too early. Already-frozen events (e.g. EA1 after its freeze) are omitted even when later events in the same cycle remain open. Names expand to Jira picklist values like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`). Empty resolution **fail-closes** (never-match TV clause) instead of omitting the filter.
 - **Status**: not Closed, Resolved, or Cancelled
 - **Not** filtered on `strat-creator-human-sign-off` — that label is an AI First hard check, not a discovery prerequisite
 

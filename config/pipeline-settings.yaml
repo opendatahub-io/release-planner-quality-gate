@@ -18,8 +18,9 @@ jql:
     - Resolved
     - Cancelled
   # Prefer calendar-derived Target Versions: each event whose own codeFreeze
-  # is still in the future (not planningFreeze), expanded to Jira picklist
-  # names like "3.6 EA1 RHOAI RELEASE". Already-frozen events are omitted.
+  # is still in the future. We use codeFreeze (not planningFreeze) because
+  # Features remain release candidates — and still need QG1 checks — until
+  # that event stops taking new work. Already-frozen events are omitted.
   # Empty resolution fail-closes (never-match TV clause), not open backlog.
   # Set target_versions explicitly to override (bare 3.* or full picklist
   # names; obsolete rhoai-3.x names are rejected).

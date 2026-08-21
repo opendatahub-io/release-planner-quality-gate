@@ -5,10 +5,18 @@ Calendar / Product Pages use bare ``3.*`` cycle names (not obsolete
 like ``3.6 EA1 RHOAI RELEASE``.
 
 QG1 discovery intentionally uses each event's ``codeFreeze`` (not
-``planningFreeze``) as the cutoff: Features remain in the planning-ready
-population until that event's code freeze date. Expansion emits only
-events whose own freeze is still in the future (``>= as_of``), so an
-already-frozen EA1 is not kept merely because EA2/GA are still open.
+``planningFreeze``) as the cutoff.
+
+Rationale: ``planningFreeze`` locks *scope for the planning conversation*.
+``codeFreeze`` is when engineering stops taking new work for that event.
+QG1 asks "is this Feature still a candidate for this Target Version?" — that
+stays true until the event's code freeze. Cutting discovery at planning
+freeze would drop Features from the gate between planning freeze and code
+freeze, while they can still land and still need readiness checks.
+
+Expansion emits only events whose own freeze is still in the future
+(``>= as_of``), so an already-frozen EA1 is not kept merely because EA2/GA
+are still open.
 """
 from __future__ import annotations
 

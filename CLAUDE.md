@@ -14,9 +14,11 @@ CI**.
 
 Discovery population: `(RHAISTRAT ∧ Feature|Initiative) ∨ (AIPCC ∧ Feature)`.
 Target Versions are calendar events whose own `codeFreeze` is still future
-(not `planningFreeze`), expanded to picklist names like `3.6 EA1 RHOAI RELEASE`
-(not `rhoai-3.x`); empty resolution fail-closes. Auto-RICE is capped via
-`rice_scorer.max_auto_fix`. Excludes Closed/Resolved/Cancelled.
+(not `planningFreeze` — Features stay release candidates until code freeze,
+so QG1 must keep checking them after planning freeze). Expanded to picklist
+names like `3.6 EA1 RHOAI RELEASE` (not `rhoai-3.x`); empty resolution
+fail-closes. Auto-RICE is capped via `rice_scorer.max_auto_fix`. Excludes
+Closed/Resolved/Cancelled.
 Human sign-off is not a discovery filter. Initiatives use the same Feature FPDoR checks.
 
 ## Execution Modes
