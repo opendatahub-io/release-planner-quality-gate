@@ -11,7 +11,7 @@ Source of truth for UI scoring: Org Pulse `modules/releases/server/planning/fpdo
 | Org Pulse | `totalCount = 17` always | `pass: true`, `state: 'not-applicable'` | `pass === false` only |
 | QG1 | `FPDOR_TOTAL_COUNT = 17` | `passed=True`, `not_applicable=True` | `passed=False` (non-N/A, non-infra) |
 
-Gate comments and `run-data.json` include: **`Score: X/17 (Y N/A, Z FAIL)`**.
+Gate comments and `run-data.json` include: **`Score: X/17 (Y N/A, Z FAIL)`**. The per-check table is sorted by **importance (critical first)** with an Importance column, aligned with Org Pulse `fpdor-severity.js` (display/triage only — does not change pass/fail).
 
 ## The 17 checks (QG1 `pipeline-settings.yaml`)
 

@@ -625,8 +625,12 @@ class TestBuildGateComment:
             "fail", self.LABEL_CONFIG,
         )
         assert "**Score: 16/17** (2 N/A, 1 FAIL)" in md
-        assert "| Human Sign-off | N/A |" in md
-        assert "| Strategy Rubric Pass | N/A |" in md
+        assert "Checks ordered by importance (critical first)." in md
+        assert "| Human Sign-off | Medium | N/A |" in md
+        assert "| Strategy Rubric Pass | Soft | N/A |" in md
+        # Critical checks appear before the soft N/A row in the table.
+        table = md.split("| Check | Importance |")[1]
+        assert table.index("Components") < table.index("Human Sign-off")
 
     def test_score_line_all_pass(self):
         issue = {"fields": {"labels": []}}

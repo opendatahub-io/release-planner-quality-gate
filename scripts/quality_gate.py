@@ -41,6 +41,7 @@ from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
+from scripts.fpdor_severity import check_severity_label, sort_checks_for_display
 from scripts.release_calendar import resolve_discovery_target_versions
 
 
@@ -402,12 +403,15 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         lines.append(f"{len(failed)} check(s) failed.")
     lines.append("")
 
+    lines.append("Checks ordered by importance (critical first).")
+    lines.append("")
+
     issue_labels = issue.get("fields", {}).get("labels", [])
     has_auto_rice = "rp-qg1-auto-rice" in issue_labels
 
-    lines.append("| Check | Status | Details |")
-    lines.append("|-------|--------|---------|")
-    for r in check_results:
+    lines.append("| Check | Importance | Status | Details |")
+    lines.append("|-------|------------|--------|---------|")
+    for r in sort_checks_for_display(check_results):
         check_label = CHECK_LABELS.get(r.name, r.name)
         if r.name == "has_rice" and has_auto_rice:
             check_label = "RICE Score (Auto-generated)"
@@ -425,7 +429,9 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         else:
             status_icon = "FAIL"
             detail = _friendly_fail_details(r.details)
-        lines.append(f"| {check_label} | {status_icon} | {detail} |")
+        importance = check_severity_label(r.name)
+        lines.append(
+            f"| {check_label} | {importance} | {status_icon} | {detail} |")
 
     lines.append("")
     lines.append(f"Label applied: {label}")
