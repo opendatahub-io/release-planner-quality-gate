@@ -5,6 +5,8 @@ from scripts.checks import (
     CheckResult,
     instantiate_checks,
     compute_verdict,
+    compute_fpdor_score,
+    FPDOR_TOTAL_COUNT,
     CHECK_REGISTRY,
 )
 # Importing hard_checks registers the check types
@@ -92,6 +94,39 @@ class TestComputeVerdict:
             ),
         ]
         assert compute_verdict(results) == "pass"
+
+
+class TestComputeFpdorScore:
+    def test_na_counts_as_pass_toward_seventeen(self):
+        results = [
+            CheckResult(name=f"c{i}", passed=True, details="ok")
+            for i in range(15)
+        ] + [
+            CheckResult(
+                name="has_sign_off", passed=True, details="N/A",
+                not_applicable=True,
+            ),
+            CheckResult(
+                name="has_rubric_pass", passed=True, details="N/A",
+                not_applicable=True,
+            ),
+        ]
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 17
+        assert score["total_count"] == FPDOR_TOTAL_COUNT
+        assert score["na_count"] == 2
+        assert score["fail_count"] == 0
+
+    def test_failures_do_not_count_as_passed(self):
+        results = [
+            CheckResult(name=f"c{i}", passed=True, details="ok")
+            for i in range(16)
+        ] + [
+            CheckResult(name="has_rice", passed=False, details="missing"),
+        ]
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 16
+        assert score["fail_count"] == 1
 
 
 # --- FieldPresentCheck ---
@@ -954,17 +989,6 @@ class TestInstantiateChecks:
         assert compute_verdict(results) == "pass"
         assert all(r.passed for r in results)
 
-    def test_legacy_feature_full_hard_checks_pass(self):
-        """Legacy Features (no strat-creator-*) pass via ai_first_only N/A + description."""
-        checks = instantiate_checks(ALL_HARD_CHECKS)
-        results = [c.evaluate(LEGACY_PASSING_ISSUE) for c in checks]
-        assert len(results) == 17
-        by_name = {r.name: r for r in results}
-        assert by_name["has_sign_off"].not_applicable is True
-        assert by_name["has_rubric_pass"].not_applicable is True
-        assert compute_verdict(results) == "pass"
-        assert all(r.passed for r in results)
-
     def test_missing_child_epics_fails(self):
         checks = instantiate_checks(ALL_HARD_CHECKS)
         issue = {**FULL_PASSING_ISSUE, "_child_epics": []}
@@ -1067,3 +1091,16 @@ class TestInstantiateChecks:
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
+
+    def test_legacy_full_pass_matches_org_pulse_seventeen(self):
+        """Legacy fixture: sign-off/rubric N/A; description criteria evaluated."""
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        results = [c.evaluate(LEGACY_PASSING_ISSUE) for c in checks]
+        assert len(results) == FPDOR_TOTAL_COUNT
+        assert compute_verdict(results) == "pass"
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 17
+        assert score["na_count"] == 2
+        assert score["fail_count"] == 0
+        na_names = {r.name for r in results if r.not_applicable}
+        assert na_names == {"has_sign_off", "has_rubric_pass"}

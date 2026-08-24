@@ -59,6 +59,33 @@ def instantiate_checks(check_configs: list[dict]) -> list[BaseCheck]:
     return checks
 
 
+FPDOR_TOTAL_COUNT = 17
+
+
+def compute_fpdor_score(check_results: list[CheckResult]) -> dict:
+    """Org Pulse–aligned FPDoR score for gate comments and artifacts.
+
+    Always uses a fixed denominator of 17. Items marked ``not_applicable``
+    have ``passed=True`` and count toward ``passed_count`` (same as Org Pulse
+    ``state: 'not-applicable'``). Only real failures (``passed=False`` and
+    not N/A, not infra error) increment ``fail_count``.
+    """
+    passed_count = sum(1 for r in check_results if r.passed)
+    na_count = sum(1 for r in check_results if r.not_applicable)
+    fail_count = sum(
+        1 for r in check_results
+        if not r.passed and not r.not_applicable and not r.infra_error
+    )
+    error_count = sum(1 for r in check_results if r.infra_error)
+    return {
+        "passed_count": passed_count,
+        "total_count": FPDOR_TOTAL_COUNT,
+        "na_count": na_count,
+        "fail_count": fail_count,
+        "error_count": error_count,
+    }
+
+
 def compute_verdict(check_results: list[CheckResult]) -> str:
     """Derive pass / fail / error from check results.
 

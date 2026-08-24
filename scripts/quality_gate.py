@@ -15,7 +15,12 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.checks import instantiate_checks, compute_verdict, CheckResult
+from scripts.checks import (
+    instantiate_checks,
+    compute_verdict,
+    compute_fpdor_score,
+    CheckResult,
+)
 import scripts.checks.hard_checks  # noqa: F401 — registers check types
 from scripts.jira_utils import (
     require_env,
@@ -351,6 +356,21 @@ def compute_checks_version(hard_checks_config):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
+def _format_fpdor_score_line(check_results, verdict):
+    """Build Org Pulse–aligned score summary for gate comments."""
+    score = compute_fpdor_score(check_results)
+    if score["error_count"]:
+        return (
+            f"**Score: {score['passed_count']}/{score['total_count']}** "
+            f"({score['na_count']} N/A, {score['fail_count']} FAIL, "
+            f"{score['error_count']} ERROR)"
+        )
+    return (
+        f"**Score: {score['passed_count']}/{score['total_count']}** "
+        f"({score['na_count']} N/A, {score['fail_count']} FAIL)"
+    )
+
+
 def build_gate_comment(issue, check_results, verdict, label_config,
                        checks_version=""):
     """Build a deterministic gate result comment in markdown."""
@@ -365,6 +385,8 @@ def build_gate_comment(issue, check_results, verdict, label_config,
 
     lines = [
         f"**Release Quality Gate 1: Feature Definition of Ready for Planning — {status}**",
+        "",
+        _format_fpdor_score_line(check_results, verdict),
         "",
     ]
 
@@ -646,6 +668,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
         issues_data.append({
             "key": key,
             "verdict": verdict,
+            "fpdor": compute_fpdor_score(results),
             "checks": {
                 r.name: {
                     "passed": r.passed,

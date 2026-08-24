@@ -361,7 +361,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
                 passed=True,
                 not_applicable=True,
                 details=(
-                    "Not checked — no architecture notes or "
+                    "N/A — no architecture notes or "
                     "“not required” in description"
                 ),
             )
@@ -369,7 +369,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
             name=name,
             passed=True,
             not_applicable=True,
-            details="Not checked — no description architecture signals",
+            details="N/A — no description architecture signals",
         )
 
     if criterion == "uxd_description":
@@ -384,7 +384,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
             passed=True,
             not_applicable=True,
             details=(
-                "Not checked — no UXD component and no “N/A – no UX” note"
+                "N/A — no UXD component and no “N/A – no UX” note"
             ),
         )
 

@@ -21,15 +21,11 @@ Discovery matches Org Pulse / Product Pages planning population:
 
 Further filters:
 
-- **Target Version** (`cf[10855]`): events from `config/release-calendar.json` whose own **`codeFreeze` is still in the future** (inclusive of today). QG1 uses `codeFreeze`, not `planningFreeze`, on purpose: planning freeze locks scope for the planning conversation; code freeze is when that event stops taking new work. A Feature with that Target Version remains a release candidate — and still needs QG1 readiness checks — until code freeze. Cutting discovery at planning freeze would drop Features from the gate too early. Already-frozen events (e.g. EA1 after its freeze) are omitted even when later events in the same cycle remain open. Names expand to Jira picklist values like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`). Empty resolution **fail-closes** (never-match TV clause) instead of omitting the filter.
+- **Target Version** (`cf[10855]`): cycles from `config/release-calendar.json` whose **code freeze is still in the future** (inclusive of today), expanded to Jira picklist names like `3.6 EA1 RHOAI RELEASE` / `RHAII` / `RHELAI` (not obsolete `rhoai-3.x`)
 - **Status**: not Closed, Resolved, or Cancelled
 - **Not** filtered on `strat-creator-human-sign-off` — that label is an AI First hard check, not a discovery prerequisite
 
-**RHAISTRAT Initiatives** are in scope by design and run the same Feature FPDoR hard checks (RICE, child Epics, docs, description criteria, …).
-
-Legacy Features (no `strat-creator-*` labels) stay in scope. Sign-off and rubric checks are marked N/A for them so they do not false-fail. Description FPDoR criteria also accept Legacy Features via description text (no Claude), matching Org Pulse.
-
-Batch auto-RICE is capped (`rice_scorer.max_auto_fix`, default 25) so the larger discovery population cannot spawn unbounded sequential Claude calls.
+Legacy Features (no `strat-creator-*` labels) stay in scope. Sign-off and rubric checks are marked N/A for them so they do not false-fail.
 
 ## Architecture
 
@@ -87,7 +83,11 @@ make run                                    # full run: evaluate, fix, label
 
 ## Checks
 
-Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wiki/spaces/RHAI/pages/442958832/Planning+Phase+-+Definition+of+Ready+Definition+of+Done) mandatory fields (Phase 1):
+Gate 1 uses a **fixed 17-item FPDoR checklist** aligned with [Org Pulse `fpdor.js`](https://github.com/red-hat-data-services/rhai-org-pulse/blob/main/modules/releases/server/planning/fpdor.js) and the [Planning FPDoR Confluence page](https://redhat.atlassian.net/wiki/spaces/RHAI/pages/442958832). **17 items always; N/A counts as pass; only real failures block `rp-qg1-pass`.** Gate comments show `Score: X/17 (Y N/A, Z FAIL)` alongside the per-check table.
+
+See [`docs/ORG-PULSE-ALIGNMENT.md`](docs/ORG-PULSE-ALIGNMENT.md) for the full item mapping and intentional differences (e.g. QG1’s separate `has_rubric_pass` vs Org Pulse’s Source RFE item).
+
+Gate 1 hard checks:
 
 | Check | Type | What It Validates | Auto-Fixable |
 |-------|------|-------------------|--------------|
@@ -109,7 +109,7 @@ Gate 1 hard checks align to the [Planning FPDoR](https://redhat.atlassian.net/wi
 | `has_uxd_description` | `description_criterion` | UXD component or explicit “N/A – no UX”; else N/A | No |
 | `has_cross_team_deps` | `description_criterion` | ≥2 eng components, dependency language, or `epic-creator-auto-decomposed` | No |
 
-**Verdict**: all applicable checks must pass → `rp-qg1-pass`. Any applicable failure → `rp-qg1-fail`. Checks marked N/A (Legacy Features without `strat-creator-*` labels for sign-off/rubric) do not count as failures.
+**Verdict**: all applicable checks must pass → `rp-qg1-pass`. Any applicable failure → `rp-qg1-fail`. Checks marked N/A (`passed=True`, `not_applicable=True`) count toward the **17/17** score and do not block pass. The denominator is always 17 — N/A items are not removed from the list.
 
 Description checks scan the Jira **description** field only (no attachments, no Claude). Failures are content fails (labels/comments are written). They are not infrastructure errors.
 
@@ -186,8 +186,11 @@ tests/
   test_checks.py         # Check framework + all check types
   test_description_signals.py  # Org Pulse scanner parity
   test_quality_gate.py   # JQL builder, config, evaluate, run-data
+<<<<<<< HEAD
   test_fingerprint_skip.py  # QG1-FP stability / skip logic
+=======
   test_release_calendar.py  # Calendar Target Version helpers
+>>>>>>> feat(qg1): align discovery population and Legacy path checks
   test_label_management.py  # Atomic label swap logic
   test_rice_invoker.py   # RICE structured output parsing
   test_report.py         # Report generation

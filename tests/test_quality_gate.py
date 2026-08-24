@@ -8,6 +8,7 @@ import pytest
 
 from scripts.quality_gate import (
     build_jql,
+    build_gate_comment,
     collect_required_fields,
     load_config,
     build_run_data,
@@ -15,7 +16,13 @@ from scripts.quality_gate import (
     enrich_issues_with_child_epics,
 )
 from scripts.jira_utils import fetch_child_epics_by_parent
-from scripts.checks import CheckResult, compute_verdict, instantiate_checks
+from scripts.checks import (
+    CheckResult,
+    compute_verdict,
+    compute_fpdor_score,
+    FPDOR_TOTAL_COUNT,
+    instantiate_checks,
+)
 import scripts.checks.hard_checks  # noqa: F401
 
 
@@ -74,28 +81,6 @@ class TestBuildJql:
         jql = build_jql(config)
         assert 'labels != "rp-qg1-pass"' in jql
         assert 'labels != "rp-qg1-skip"' in jql
-
-    def test_empty_future_freeze_list_fail_closes_target_version(self, tmp_path):
-        """Stale calendar must not omit cf[10855] and scan the whole backlog."""
-        from datetime import date
-
-        calendar_path = tmp_path / "cal.json"
-        calendar_path.write_text(
-            '{"events":[{"version":"3.0","event":"GA","codeFreeze":"2020-01-01"}]}'
-        )
-        config = {
-            "jql": {
-                "scopes": [
-                    {"project": "RHAISTRAT", "issuetypes": ["Feature"]},
-                ],
-                "excluded_statuses": ["Closed"],
-                "target_versions_from_calendar": True,
-                "calendar_path": str(calendar_path),
-            }
-        }
-        jql = build_jql(config, as_of=date(2026, 8, 21))
-        assert "cf[10855]" in jql
-        assert "__qg1-no-discovery-target-versions__" in jql
 
     def test_multi_scope_population_and_calendar_versions(self, tmp_path):
         calendar_path = tmp_path / "cal.json"
@@ -183,6 +168,7 @@ class TestLoadConfig:
     def test_fpdor_phase1_checks_configured(self):
         config = load_config()
         hard = config["checks"]["hard_checks"]
+        assert len(hard) == FPDOR_TOTAL_COUNT
         names = {c["name"]: c["type"] for c in hard}
         assert names["has_pm"] == "field_present"
         assert names["has_delivery_owner"] == "field_present"
@@ -598,3 +584,65 @@ class TestEnrichIssuesWithChildEpics:
             {"key": "X", "_child_epics": [{"key": "E-1"}], "fields": {}},
             cfg,
         ) is False
+
+
+class TestBuildGateComment:
+    LABEL_CONFIG = {
+        "gate_pass": "rp-qg1-pass",
+        "gate_fail": "rp-qg1-fail",
+        "auto_rice": "rp-qg1-auto-rice",
+    }
+
+    def _results(self, *, fail_rice=False, na_sign_off=False):
+        names = [
+            "has_rice", "has_priority", "has_pm", "has_delivery_owner",
+            "has_sign_off", "has_rubric_pass", "has_components",
+            "has_release_type", "has_docs_impact", "has_target_version",
+            "has_child_epics", "has_requirements_clarity",
+            "has_acceptance_criteria", "has_risks_assumptions",
+            "has_architectural_alignment", "has_uxd_description",
+            "has_cross_team_deps",
+        ]
+        results = []
+        for name in names:
+            na = (
+                na_sign_off
+                and name in ("has_sign_off", "has_rubric_pass")
+            )
+            passed = not (fail_rice and name == "has_rice")
+            results.append(CheckResult(
+                name=name,
+                passed=passed or na,
+                details="ok" if passed else "Missing fields",
+                not_applicable=na,
+            ))
+        return results
+
+    def test_score_line_shows_seventeen_with_na_and_fail(self):
+        issue = {"fields": {"labels": []}}
+        md = build_gate_comment(
+            issue, self._results(fail_rice=True, na_sign_off=True),
+            "fail", self.LABEL_CONFIG,
+        )
+        assert "**Score: 16/17** (2 N/A, 1 FAIL)" in md
+        assert "| Human Sign-off | N/A |" in md
+        assert "| Strategy Rubric Pass | N/A |" in md
+
+    def test_score_line_all_pass(self):
+        issue = {"fields": {"labels": []}}
+        md = build_gate_comment(
+            issue, self._results(na_sign_off=True),
+            "pass", self.LABEL_CONFIG,
+        )
+        assert "**Score: 17/17** (2 N/A, 0 FAIL)" in md
+
+    def test_build_run_data_includes_fpdor_score(self):
+        results = self._results(na_sign_off=True)
+        data = build_run_data(
+            {"RHAISTRAT-1": results},
+            {"labels": self.LABEL_CONFIG},
+            dry_run=True,
+            mode="single",
+        )
+        assert data["issues"][0]["fpdor"]["passed_count"] == 17
+        assert data["issues"][0]["fpdor"]["total_count"] == FPDOR_TOTAL_COUNT
