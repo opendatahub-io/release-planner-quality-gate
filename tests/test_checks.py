@@ -5,6 +5,8 @@ from scripts.checks import (
     CheckResult,
     instantiate_checks,
     compute_verdict,
+    compute_fpdor_score,
+    FPDOR_TOTAL_COUNT,
     CHECK_REGISTRY,
 )
 # Importing hard_checks registers the check types
@@ -92,6 +94,39 @@ class TestComputeVerdict:
             ),
         ]
         assert compute_verdict(results) == "pass"
+
+
+class TestComputeFpdorScore:
+    def test_na_counts_as_pass_toward_seventeen(self):
+        results = [
+            CheckResult(name=f"c{i}", passed=True, details="ok")
+            for i in range(15)
+        ] + [
+            CheckResult(
+                name="has_sign_off", passed=True, details="N/A",
+                not_applicable=True,
+            ),
+            CheckResult(
+                name="has_rubric_pass", passed=True, details="N/A",
+                not_applicable=True,
+            ),
+        ]
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 17
+        assert score["total_count"] == FPDOR_TOTAL_COUNT
+        assert score["na_count"] == 2
+        assert score["fail_count"] == 0
+
+    def test_failures_do_not_count_as_passed(self):
+        results = [
+            CheckResult(name=f"c{i}", passed=True, details="ok")
+            for i in range(16)
+        ] + [
+            CheckResult(name="has_rice", passed=False, details="missing"),
+        ]
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 16
+        assert score["fail_count"] == 1
 
 
 # --- FieldPresentCheck ---
@@ -322,6 +357,46 @@ class TestLabelPresentCheck:
         result = checks[0].evaluate(issue)
         assert not result.passed
         assert "label-b" in result.details
+
+    def test_ai_first_only_na_for_legacy_without_strat_creator(self):
+        checks = instantiate_checks([{
+            "name": "has_sign_off",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-human-sign-off"],
+        }])
+        issue = {"fields": {"labels": ["some-other-label"]}}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert result.not_applicable is True
+        assert "N/A" in result.details
+
+    def test_ai_first_only_still_requires_label_for_ai_first(self):
+        checks = instantiate_checks([{
+            "name": "has_sign_off",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-human-sign-off"],
+        }])
+        issue = {"fields": {"labels": ["strat-creator-draft"]}}
+        result = checks[0].evaluate(issue)
+        assert not result.passed
+        assert not result.not_applicable
+        assert "strat-creator-human-sign-off" in result.details
+
+    def test_ai_first_only_passes_when_required_label_present(self):
+        checks = instantiate_checks([{
+            "name": "has_rubric_pass",
+            "type": "label_present",
+            "ai_first_only": True,
+            "labels": ["strat-creator-rubric-pass"],
+        }])
+        issue = {"fields": {
+            "labels": ["strat-creator-rubric-pass", "strat-creator-human-sign-off"],
+        }}
+        result = checks[0].evaluate(issue)
+        assert result.passed
+        assert not result.not_applicable
 
 
 # --- New hard checks: components, release type, docs required, target version ---
@@ -774,8 +849,10 @@ ALL_HARD_CHECKS = [
     {"name": "has_delivery_owner", "type": "field_present",
      "fields": ["assignee"]},
     {"name": "has_sign_off", "type": "label_present",
+     "ai_first_only": True,
      "labels": ["strat-creator-human-sign-off"]},
     {"name": "has_rubric_pass", "type": "label_present",
+     "ai_first_only": True,
      "labels": ["strat-creator-rubric-pass"]},
     {"name": "has_components", "type": "field_present", "fields": ["components"]},
     {"name": "has_release_type", "type": "field_present",
@@ -841,6 +918,34 @@ FULL_PASSING_ISSUE = {
         "customfield_10851": {"value": "Tech Preview"},
         "customfield_10665": {"value": "Yes"},
         "customfield_10855": [{"name": "3.5"}],
+    },
+    "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
+}
+
+
+LEGACY_PASSING_ISSUE = {
+    "key": "AIPCC-LEGACY",
+    "fields": {
+        "customfield_10862": 8,
+        "customfield_10836": 5,
+        "customfield_10838": {"id": "16144"},
+        "customfield_10637": 3,
+        "priority": {"name": "Critical"},
+        "customfield_10469": {
+            "accountId": "pm-1", "displayName": "Pat Product"},
+        "assignee": {
+            "accountId": "eng-1", "displayName": "Dev Owner"},
+        "labels": [],
+        "components": [
+            {"name": "Dashboard"},
+            {"name": "Serving"},
+            {"name": "UXD"},
+            {"name": "Documentation"},
+        ],
+        "customfield_10851": {"value": "Tech Preview"},
+        "customfield_10665": {"value": "Yes"},
+        "customfield_10855": [{"name": "3.6 EA1 RHOAI RELEASE"}],
+        "description": """## Problem Statement\nOperators need a clearer way to manage model endpoints at scale.\n\n## Acceptance Criteria\n- Users can list endpoints\n- Users can filter by status\n\n## Risks and Assumptions\n- API may change upstream\n\n## Technical Approach\nEvent-driven control plane with documented ADR-12 boundaries.\n\nN/A – no UX for this API-only feature.\n\nThis feature depends on Serving API v2 and is cross-team with Model Mesh.\n""",
     },
     "_child_epics": [{"key": "RHOAIENG-999", "project": "RHOAIENG"}],
 }
@@ -986,3 +1091,16 @@ class TestInstantiateChecks:
         }}
         results = [c.evaluate(issue) for c in checks]
         assert compute_verdict(results) == "fail"
+
+    def test_legacy_full_pass_matches_org_pulse_seventeen(self):
+        """Legacy fixture: sign-off/rubric N/A; description criteria evaluated."""
+        checks = instantiate_checks(ALL_HARD_CHECKS)
+        results = [c.evaluate(LEGACY_PASSING_ISSUE) for c in checks]
+        assert len(results) == FPDOR_TOTAL_COUNT
+        assert compute_verdict(results) == "pass"
+        score = compute_fpdor_score(results)
+        assert score["passed_count"] == 17
+        assert score["na_count"] == 2
+        assert score["fail_count"] == 0
+        na_names = {r.name for r in results if r.not_applicable}
+        assert na_names == {"has_sign_off", "has_rubric_pass"}

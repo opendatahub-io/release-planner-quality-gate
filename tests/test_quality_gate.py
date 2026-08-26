@@ -8,6 +8,7 @@ import pytest
 
 from scripts.quality_gate import (
     build_jql,
+    build_gate_comment,
     collect_required_fields,
     load_config,
     build_run_data,
@@ -15,34 +16,45 @@ from scripts.quality_gate import (
     enrich_issues_with_child_epics,
 )
 from scripts.jira_utils import fetch_child_epics_by_parent
-from scripts.checks import CheckResult, compute_verdict, instantiate_checks
+from scripts.checks import (
+    CheckResult,
+    compute_verdict,
+    compute_fpdor_score,
+    FPDOR_TOTAL_COUNT,
+    instantiate_checks,
+)
 import scripts.checks.hard_checks  # noqa: F401
 
 
 # --- JQL Builder ---
 
 class TestBuildJql:
-    def test_default_config(self):
+    def test_legacy_single_project_config(self):
         config = {
             "jql": {
                 "project": "RHAISTRAT",
-                "required_labels": ["strat-creator-human-sign-off"],
+                "required_labels": ["some-label"],
                 "excluded_statuses": ["Closed", "Resolved"],
                 "skip_labels": ["rp-qg1-pass"],
+                "target_versions_from_calendar": False,
                 "order_by": "key ASC",
             }
         }
         jql = build_jql(config)
         assert 'project = RHAISTRAT' in jql
-        assert 'labels = "strat-creator-human-sign-off"' in jql
+        assert 'labels = "some-label"' in jql
         assert "cf[10855]" not in jql
-        assert 'status != "Closed"' in jql
-        assert 'status != "Resolved"' in jql
+        assert 'status NOT IN ("Closed", "Resolved")' in jql
         assert 'labels != "rp-qg1-pass"' in jql
         assert jql.endswith("ORDER BY key ASC")
 
     def test_minimal_config(self):
-        config = {"jql": {"project": "RHAISTRAT"}}
+        config = {
+            "jql": {
+                "project": "RHAISTRAT",
+                "target_versions_from_calendar": False,
+            }
+        }
         jql = build_jql(config)
         assert jql == "project = RHAISTRAT ORDER BY key ASC"
 
@@ -51,21 +63,75 @@ class TestBuildJql:
             "jql": {
                 "project": "RHAISTRAT",
                 "required_labels": ["some-label"],
+                "target_versions_from_calendar": False,
             }
         }
         jql = build_jql(config)
         assert "cf[10855]" not in jql
+        assert 'labels = "some-label"' in jql
 
     def test_multiple_skip_labels(self):
         config = {
             "jql": {
                 "project": "RHAISTRAT",
                 "skip_labels": ["rp-qg1-pass", "rp-qg1-skip"],
+                "target_versions_from_calendar": False,
             }
         }
         jql = build_jql(config)
         assert 'labels != "rp-qg1-pass"' in jql
         assert 'labels != "rp-qg1-skip"' in jql
+
+    def test_multi_scope_population_and_calendar_versions(self, tmp_path):
+        calendar_path = tmp_path / "cal.json"
+        calendar_path.write_text(
+            '{"events":[{"version":"3.6","event":"EA1","codeFreeze":"2026-08-21"},'
+            '{"version":"3.5","event":"GA","codeFreeze":"2026-07-24"}]}'
+        )
+        from datetime import date
+
+        config = {
+            "jql": {
+                "scopes": [
+                    {"project": "RHAISTRAT", "issuetypes": ["Feature", "Initiative"]},
+                    {"project": "AIPCC", "issuetypes": ["Feature"]},
+                ],
+                "required_labels": [],
+                "excluded_statuses": ["Closed", "Resolved", "Cancelled"],
+                "target_versions_from_calendar": True,
+                "calendar_path": str(calendar_path),
+                "order_by": "key ASC",
+            }
+        }
+        jql = build_jql(config, as_of=date(2026, 8, 14))
+        assert (
+            "((project = RHAISTRAT AND issuetype in (Feature, Initiative)) "
+            "OR (project = AIPCC AND issuetype = Feature))"
+        ) in jql
+        assert 'labels = "strat-creator-human-sign-off"' not in jql
+        assert 'cf[10855] IN (' in jql
+        assert '"3.6 EA1 RHOAI RELEASE"' in jql
+        assert '"3.6"' not in jql.split("cf[10855]")[1].split(")")[0]
+        assert 'status NOT IN ("Closed", "Resolved", "Cancelled")' in jql
+
+    def test_explicit_target_versions(self):
+        config = {
+            "jql": {
+                "scopes": [
+                    {"project": "RHAISTRAT", "issuetypes": ["Feature"]},
+                ],
+                "target_versions": [
+                    "3.6 EA1 RHOAI RELEASE",
+                    "3.7 GA RHOAI RELEASE",
+                ],
+                "target_versions_from_calendar": True,
+            }
+        }
+        jql = build_jql(config)
+        assert (
+            'cf[10855] IN ("3.6 EA1 RHOAI RELEASE", "3.7 GA RHOAI RELEASE")'
+            in jql
+        )
 
 
 # --- Config Loading ---
@@ -73,7 +139,12 @@ class TestBuildJql:
 class TestLoadConfig:
     def test_load_pipeline_settings(self):
         config = load_config()
-        assert config["jql"]["project"] == "RHAISTRAT"
+        scopes = config["jql"]["scopes"]
+        assert {"project": "RHAISTRAT", "issuetypes": ["Feature", "Initiative"]} in scopes
+        assert {"project": "AIPCC", "issuetypes": ["Feature"]} in scopes
+        assert config["jql"].get("required_labels") in ([], None)
+        assert "Cancelled" in config["jql"]["excluded_statuses"]
+        assert config["jql"].get("target_versions_from_calendar") is True
         assert "rice_fields" in config
         assert "labels" in config
         assert "checks" in config
@@ -97,6 +168,7 @@ class TestLoadConfig:
     def test_fpdor_phase1_checks_configured(self):
         config = load_config()
         hard = config["checks"]["hard_checks"]
+        assert len(hard) == FPDOR_TOTAL_COUNT
         names = {c["name"]: c["type"] for c in hard}
         assert names["has_pm"] == "field_present"
         assert names["has_delivery_owner"] == "field_present"
@@ -114,6 +186,8 @@ class TestLoadConfig:
         assert by_name["has_uxd_description"].get("accept_uxd_component") is True
         assert by_name["has_cross_team_deps"].get("accept_multi_eng_components") is True
         assert by_name["has_cross_team_deps"].get("accept_epic_creator_label") is True
+        assert by_name["has_sign_off"].get("ai_first_only") is True
+        assert by_name["has_rubric_pass"].get("ai_first_only") is True
         child_cfg = by_name["has_child_epics"]
         assert "RHOAIENG" in child_cfg["engineering_projects"]
         assert "INFERENG" in child_cfg["engineering_projects"]
@@ -510,3 +584,69 @@ class TestEnrichIssuesWithChildEpics:
             {"key": "X", "_child_epics": [{"key": "E-1"}], "fields": {}},
             cfg,
         ) is False
+
+
+class TestBuildGateComment:
+    LABEL_CONFIG = {
+        "gate_pass": "rp-qg1-pass",
+        "gate_fail": "rp-qg1-fail",
+        "auto_rice": "rp-qg1-auto-rice",
+    }
+
+    def _results(self, *, fail_rice=False, na_sign_off=False):
+        names = [
+            "has_rice", "has_priority", "has_pm", "has_delivery_owner",
+            "has_sign_off", "has_rubric_pass", "has_components",
+            "has_release_type", "has_docs_impact", "has_target_version",
+            "has_child_epics", "has_requirements_clarity",
+            "has_acceptance_criteria", "has_risks_assumptions",
+            "has_architectural_alignment", "has_uxd_description",
+            "has_cross_team_deps",
+        ]
+        results = []
+        for name in names:
+            na = (
+                na_sign_off
+                and name in ("has_sign_off", "has_rubric_pass")
+            )
+            passed = not (fail_rice and name == "has_rice")
+            results.append(CheckResult(
+                name=name,
+                passed=passed or na,
+                details="ok" if passed else "Missing fields",
+                not_applicable=na,
+            ))
+        return results
+
+    def test_score_line_shows_seventeen_with_na_and_fail(self):
+        issue = {"fields": {"labels": []}}
+        md = build_gate_comment(
+            issue, self._results(fail_rice=True, na_sign_off=True),
+            "fail", self.LABEL_CONFIG,
+        )
+        assert "**Score: 16/17** (2 N/A, 1 FAIL)" in md
+        assert "Checks ordered by importance (critical first)." in md
+        assert "| Human Sign-off | Medium | N/A |" in md
+        assert "| Strategy Rubric Pass | Soft | N/A |" in md
+        # Critical checks appear before the soft N/A row in the table.
+        table = md.split("| Check | Importance |")[1]
+        assert table.index("Components") < table.index("Human Sign-off")
+
+    def test_score_line_all_pass(self):
+        issue = {"fields": {"labels": []}}
+        md = build_gate_comment(
+            issue, self._results(na_sign_off=True),
+            "pass", self.LABEL_CONFIG,
+        )
+        assert "**Score: 17/17** (2 N/A, 0 FAIL)" in md
+
+    def test_build_run_data_includes_fpdor_score(self):
+        results = self._results(na_sign_off=True)
+        data = build_run_data(
+            {"RHAISTRAT-1": results},
+            {"labels": self.LABEL_CONFIG},
+            dry_run=True,
+            mode="single",
+        )
+        assert data["issues"][0]["fpdor"]["passed_count"] == 17
+        assert data["issues"][0]["fpdor"]["total_count"] == FPDOR_TOTAL_COUNT

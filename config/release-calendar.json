@@ -1,0 +1,69 @@
+{
+  "generatedAt": "2026-04-30",
+  "note": "Key dates parsed from RHOAI GA release calendar CSV. Dates are YYYY-MM-DD. Rule: the code freeze of event N serves as the planning freeze of event N+1. Product Pages (RHAI 3.5/3.6) state the same rule in plain language: RHOAI planning freeze = code freeze of the previous release event. 3.4 EA1 planningFreeze was null in the CSV (no prior cycle in this file); set to 2026-01-23 by applying the observed EA1 PF→CF gap from 3.5/3.6 (~28 days) to 3.4 EA1 codeFreeze 2026-02-20. Confirm against 3.3 GA code freeze if that schedule is recovered. RHAIIS 3.4 shares these same freeze/release dates for historical delivery bootstrap (no separate RHAIIS calendar rows); EA2 planningFreeze=2026-02-20.",
+  "events": [
+    {
+      "version": "3.4",
+      "event": "EA1",
+      "planningFreeze": "2026-01-23",
+      "codeFreeze": "2026-02-20",
+      "releaseDate": "2026-03-19"
+    },
+    {
+      "version": "3.4",
+      "event": "EA2",
+      "planningFreeze": "2026-02-20",
+      "codeFreeze": "2026-03-13",
+      "releaseDate": "2026-04-22"
+    },
+    {
+      "version": "3.4",
+      "event": "GA",
+      "planningFreeze": "2026-03-27",
+      "codeFreeze": "2026-04-15",
+      "releaseDate": "2026-05-14"
+    },
+    {
+      "version": "3.5",
+      "event": "EA1",
+      "planningFreeze": "2026-04-15",
+      "codeFreeze": "2026-05-15",
+      "releaseDate": "2026-06-18"
+    },
+    {
+      "version": "3.5",
+      "event": "EA2",
+      "planningFreeze": "2026-05-15",
+      "codeFreeze": "2026-06-19",
+      "releaseDate": "2026-07-16"
+    },
+    {
+      "version": "3.5",
+      "event": "GA",
+      "planningFreeze": "2026-06-19",
+      "codeFreeze": "2026-07-24",
+      "releaseDate": "2026-08-20"
+    },
+    {
+      "version": "3.6",
+      "event": "EA1",
+      "planningFreeze": "2026-07-24",
+      "codeFreeze": "2026-08-21",
+      "releaseDate": "2026-09-17"
+    },
+    {
+      "version": "3.6",
+      "event": "EA2",
+      "planningFreeze": "2026-08-21",
+      "codeFreeze": "2026-09-18",
+      "releaseDate": "2026-10-15"
+    },
+    {
+      "version": "3.6",
+      "event": "GA",
+      "planningFreeze": "2026-09-18",
+      "codeFreeze": "2026-10-23",
+      "releaseDate": "2026-11-19"
+    }
+  ]
+}

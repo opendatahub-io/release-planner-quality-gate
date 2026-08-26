@@ -15,7 +15,12 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.checks import instantiate_checks, compute_verdict, CheckResult
+from scripts.checks import (
+    instantiate_checks,
+    compute_verdict,
+    compute_fpdor_score,
+    CheckResult,
+)
 import scripts.checks.hard_checks  # noqa: F401 — registers check types
 from scripts.jira_utils import (
     require_env,
@@ -36,6 +41,9 @@ from scripts.rice_invoker import (
     generate_rice_scores,
     write_rice_to_jira,
 )
+from scripts.fpdor_severity import check_severity_label, sort_checks_for_display
+from scripts.release_calendar import resolve_discovery_target_versions
+
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "pipeline-settings.yaml"
@@ -49,23 +57,67 @@ def load_config(path=None):
         return yaml.safe_load(f)
 
 
-def build_jql(config):
-    """Build JQL from pipeline-settings config."""
-    jql_cfg = config["jql"]
-    clauses = [f'project = {jql_cfg["project"]}']
+def _scope_clause(scope: dict) -> str:
+    """Build one project + issuetype scope clause."""
+    project = scope["project"]
+    types = scope.get("issuetypes") or ["Feature"]
+    if len(types) == 1:
+        type_clause = f'issuetype = {types[0]}'
+    else:
+        type_list = ", ".join(types)
+        type_clause = f"issuetype in ({type_list})"
+    return f"(project = {project} AND {type_clause})"
 
-    for label in jql_cfg.get("required_labels", []):
+
+# Sentinel so empty calendar/TV resolution cannot scan the whole backlog.
+_NO_TV_SENTINEL = "__qg1-no-discovery-target-versions__"
+
+
+def _requires_target_version_clause(jql_cfg: dict) -> bool:
+    """True when discovery must constrain Target Version (fail closed)."""
+    if jql_cfg.get("target_versions"):
+        return True
+    return bool(jql_cfg.get("target_versions_from_calendar", True))
+
+
+def build_jql(config, as_of=None):
+    """Build discovery JQL from pipeline-settings config.
+
+    Supports either legacy ``jql.project`` or multi-scope ``jql.scopes``.
+    Target versions come from explicit ``target_versions`` or the release
+    calendar (per-event future ``codeFreeze``).
+
+    When calendar/explicit TV resolution is enabled but yields no names,
+    JQL uses a never-match Target Version clause (fail closed) instead of
+    omitting the filter and scanning the whole backlog.
+    """
+    jql_cfg = config["jql"]
+    scopes = jql_cfg.get("scopes")
+    if scopes:
+        scope_jql = " OR ".join(_scope_clause(s) for s in scopes)
+        clauses = [f"({scope_jql})"]
+    else:
+        clauses = [f'project = {jql_cfg["project"]}']
+
+    for label in jql_cfg.get("required_labels") or []:
         clauses.append(f'labels = "{label}"')
 
-    versions = jql_cfg.get("target_versions", [])
+    versions = resolve_discovery_target_versions(config, as_of=as_of)
     if versions:
         version_list = ", ".join(f'"{v}"' for v in versions)
         clauses.append(f"cf[10855] IN ({version_list})")
+    elif _requires_target_version_clause(jql_cfg):
+        clauses.append(f'cf[10855] = "{_NO_TV_SENTINEL}"')
 
-    for status in jql_cfg.get("excluded_statuses", []):
-        clauses.append(f'status != "{status}"')
+    excluded = jql_cfg.get("excluded_statuses") or []
+    if excluded:
+        if len(excluded) == 1:
+            clauses.append(f'status != "{excluded[0]}"')
+        else:
+            status_list = ", ".join(f'"{s}"' for s in excluded)
+            clauses.append(f"status NOT IN ({status_list})")
 
-    for label in jql_cfg.get("skip_labels", []):
+    for label in jql_cfg.get("skip_labels") or []:
         clauses.append(f'labels != "{label}"')
 
     jql = " AND ".join(clauses)
@@ -305,6 +357,21 @@ def compute_checks_version(hard_checks_config):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
+def _format_fpdor_score_line(check_results, verdict):
+    """Build Org Pulse–aligned score summary for gate comments."""
+    score = compute_fpdor_score(check_results)
+    if score["error_count"]:
+        return (
+            f"**Score: {score['passed_count']}/{score['total_count']}** "
+            f"({score['na_count']} N/A, {score['fail_count']} FAIL, "
+            f"{score['error_count']} ERROR)"
+        )
+    return (
+        f"**Score: {score['passed_count']}/{score['total_count']}** "
+        f"({score['na_count']} N/A, {score['fail_count']} FAIL)"
+    )
+
+
 def build_gate_comment(issue, check_results, verdict, label_config,
                        checks_version=""):
     """Build a deterministic gate result comment in markdown."""
@@ -320,6 +387,8 @@ def build_gate_comment(issue, check_results, verdict, label_config,
     lines = [
         f"**Release Quality Gate 1: Feature Definition of Ready for Planning — {status}**",
         "",
+        _format_fpdor_score_line(check_results, verdict),
+        "",
     ]
 
     if verdict == "pass":
@@ -334,12 +403,15 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         lines.append(f"{len(failed)} check(s) failed.")
     lines.append("")
 
+    lines.append("Checks ordered by importance (critical first).")
+    lines.append("")
+
     issue_labels = issue.get("fields", {}).get("labels", [])
     has_auto_rice = "rp-qg1-auto-rice" in issue_labels
 
-    lines.append("| Check | Status | Details |")
-    lines.append("|-------|--------|---------|")
-    for r in check_results:
+    lines.append("| Check | Importance | Status | Details |")
+    lines.append("|-------|------------|--------|---------|")
+    for r in sort_checks_for_display(check_results):
         check_label = CHECK_LABELS.get(r.name, r.name)
         if r.name == "has_rice" and has_auto_rice:
             check_label = "RICE Score (Auto-generated)"
@@ -357,7 +429,9 @@ def build_gate_comment(issue, check_results, verdict, label_config,
         else:
             status_icon = "FAIL"
             detail = _friendly_fail_details(r.details)
-        lines.append(f"| {check_label} | {status_icon} | {detail} |")
+        importance = check_severity_label(r.name)
+        lines.append(
+            f"| {check_label} | {importance} | {status_icon} | {detail} |")
 
     lines.append("")
     lines.append(f"Label applied: {label}")
@@ -600,6 +674,7 @@ def build_run_data(results_by_issue, config, dry_run, mode, issue_key=None):
         issues_data.append({
             "key": key,
             "verdict": verdict,
+            "fpdor": compute_fpdor_score(results),
             "checks": {
                 r.name: {
                     "passed": r.passed,
@@ -715,16 +790,24 @@ def main(argv=None):
         results = evaluate_issue(issue, checks)
         results_by_issue[key] = results
 
-    # Auto-fix: generate RICE for issues missing it
+    # Auto-fix: generate RICE for issues missing it (capped per batch).
     needs_rice = [
         key for key, results in results_by_issue.items()
         if any(r.name == "has_rice" and not r.passed and r.auto_fixable
                for r in results)
     ]
+    rice_cfg = config.get("rice_scorer") or {}
+    max_auto = rice_cfg.get("max_auto_fix")
+    if max_auto is not None and len(needs_rice) > int(max_auto):
+        print(
+            f"\nAuto-RICE capped at {max_auto} of {len(needs_rice)} "
+            f"missing-RICE issue(s); remainder stay fail until a later run."
+        )
+        needs_rice = needs_rice[: int(max_auto)]
 
     rice_generated = {}
     if needs_rice:
-        timeout = config.get("rice_scorer", {}).get("timeout_seconds", 300)
+        timeout = rice_cfg.get("timeout_seconds", 300)
         print(f"\nGenerating RICE for {len(needs_rice)} issue(s)...")
         rice_result = generate_rice_scores(needs_rice, timeout=timeout)
 

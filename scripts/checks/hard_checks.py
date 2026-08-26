@@ -127,9 +127,27 @@ class FieldPresentCheck(BaseCheck):
 
 @register_check("label_present")
 class LabelPresentCheck(BaseCheck):
-    """Verifies the issue has specific labels."""
+    """Verifies the issue has specific labels.
+
+    When ``ai_first_only`` is true, the check is N/A for Legacy Features
+    (no ``strat-creator-*`` labels).
+    """
 
     def evaluate(self, issue: dict) -> CheckResult:
+        if self.config.get("ai_first_only"):
+            labels = issue.get("fields", {}).get("labels") or []
+            is_ai_first = any(
+                isinstance(label, str) and label.startswith("strat-creator-")
+                for label in labels
+            )
+            if not is_ai_first:
+                return CheckResult(
+                    name=self.name,
+                    passed=True,
+                    not_applicable=True,
+                    details="N/A — not an AI First (strat-creator-*) feature",
+                )
+
         required = set(self.config.get("labels", []))
         issue_labels = set(issue.get("fields", {}).get("labels", []))
         missing = required - issue_labels
@@ -138,7 +156,7 @@ class LabelPresentCheck(BaseCheck):
             return CheckResult(
                 name=self.name,
                 passed=True,
-                details=f"All required labels present",
+                details="All required labels present",
             )
         return CheckResult(
             name=self.name,
@@ -343,7 +361,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
                 passed=True,
                 not_applicable=True,
                 details=(
-                    "Not checked — no architecture notes or "
+                    "N/A — no architecture notes or "
                     "“not required” in description"
                 ),
             )
@@ -351,7 +369,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
             name=name,
             passed=True,
             not_applicable=True,
-            details="Not checked — no description architecture signals",
+            details="N/A — no description architecture signals",
         )
 
     if criterion == "uxd_description":
@@ -366,7 +384,7 @@ def _evaluate_description_signals(name: str, criterion: str, signals: dict) -> C
             passed=True,
             not_applicable=True,
             details=(
-                "Not checked — no UXD component and no “N/A – no UX” note"
+                "N/A — no UXD component and no “N/A – no UX” note"
             ),
         )
 
