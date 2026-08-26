@@ -145,7 +145,8 @@ class TestResolveDiscoveryTargetVersions:
                 "calendar_path": str(calendar_path),
             }
         }
-        names = resolve_discovery_target_versions(config)
+        names = resolve_discovery_target_versions(
+            config, as_of=date(2026, 8, 14))
         assert "3.6 EA1 RHOAI RELEASE" in names
         assert "3.6 GA RHELAI RELEASE" in names
         assert "rhoai-3.5" not in names

@@ -186,11 +186,8 @@ tests/
   test_checks.py         # Check framework + all check types
   test_description_signals.py  # Org Pulse scanner parity
   test_quality_gate.py   # JQL builder, config, evaluate, run-data
-<<<<<<< HEAD
   test_fingerprint_skip.py  # QG1-FP stability / skip logic
-=======
   test_release_calendar.py  # Calendar Target Version helpers
->>>>>>> feat(qg1): align discovery population and Legacy path checks
   test_label_management.py  # Atomic label swap logic
   test_rice_invoker.py   # RICE structured output parsing
   test_report.py         # Report generation
