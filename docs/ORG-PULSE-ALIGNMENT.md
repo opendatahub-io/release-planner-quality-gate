@@ -83,24 +83,15 @@ pytest tests/test_checks.py::TestInstantiateChecks::test_legacy_full_pass_matche
 pytest tests/test_checks.py::TestInstantiateChecks::test_full_pass_scenario -v
 ```
 
-Live Jira evaluation without Jira writes (checks only — no auto-RICE):
+Live Jira dry-run (checks + local auto-RICE, no Jira writes):
 
 ```bash
-# Use quality_gate.py --issue KEY --dry-run via a script that skips the
-# RICE auto-fix phase, or inspect artifacts after a targeted run.
-# Legacy example RHAISTRAT-96: Score 9/17 (4 N/A, 8 FAIL)
-# AI First example RHAISTRAT-2469: Score 12/17 (1 N/A, 5 FAIL)
+make run-issue-dry ISSUE=RHAISTRAT-96      # Legacy — example Score 9/17 (4 N/A, 8 FAIL)
+make run-issue-dry ISSUE=RHAISTRAT-2469    # AI First — example Score 12/17 (1 N/A, 5 FAIL)
 ```
 
-Full path with `make run-issue-dry` (checks + local auto-RICE, no Jira writes):
-
-```bash
-make run-issue-dry ISSUE=RHAISTRAT-96      # Legacy
-make run-issue-dry ISSUE=RHAISTRAT-2469    # AI First
-```
-
-`--dry-run` still invokes Claude `/rice-score` when RICE fields are missing;
-recommendations appear in the log and artifacts only — nothing is written to
-Jira (no fields, comments, or labels).
+`make run-issue-dry` / `--dry-run` runs the full gate, including Claude `/rice-score`
+when RICE fields are missing. Recommendations appear in the log and artifacts only —
+nothing is written to Jira (no fields, comments, or labels).
 
 Compare QG1 gate-comment **Score** line with Org Pulse Component load **X/17** for the same key.
