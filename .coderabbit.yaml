@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Inherits org-wide config: https://github.com/opendatahub-io/coderabbit
+# Repo: release-planner-quality-gate (Python QG1 orchestrator)
+
+inheritance: true
+
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  path_filters:
+    - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!**/artifacts/**"
+    - "!**/uv.lock"
+  path_instructions:
+    - path: "**"
+      instructions: |
+        This repo is Release Quality Gate 1 — a Python orchestrator that
+        evaluates Jira Features against a fixed 17-item FPDoR checklist.
+        Claude is used only for optional RICE auto-fix; all gate verdicts
+        and description checks are deterministic.
+
+        Review priorities:
+        1. Correctness of check logic and N/A handling (not_applicable must
+           not block pass; fixed 17-item denominator).
+        2. Jira write safety (dry-run, fingerprint skip, infra errors must
+           not mass-apply rp-qg1-fail).
+        3. Test coverage for behavior changes in scripts/checks/ and
+           scripts/quality_gate.py.
+
+        Do not suggest adding Claude to description checks or discovery.
+        See docs/ORG-PULSE-ALIGNMENT.md for Org Pulse parity rules.
+    - path: "scripts/checks/**"
+      instructions: |
+        Hard checks must stay aligned with Org Pulse fpdor.js semantics.
+        N/A items use passed=True and not_applicable=True.
+    - path: "tests/**"
+      instructions: |
+        Prefer behavioral tests over snapshot churn. Gate-comment and
+        fingerprint tests should not depend on free-text evidence wording.
