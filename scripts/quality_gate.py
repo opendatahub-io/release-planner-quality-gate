@@ -24,6 +24,7 @@ from scripts.checks import (
 import scripts.checks.hard_checks  # noqa: F401 — registers check types
 from scripts.jira_utils import (
     require_env,
+    verify_credentials,
     search_issues,
     get_issue,
     add_labels,
@@ -151,7 +152,16 @@ def discover_issues(config, server, user, token, issue_key=None):
     """Discover issues to evaluate — single key or JQL batch."""
     fields = collect_required_fields(config)
     if issue_key:
-        issue = get_issue(server, user, token, issue_key, fields=fields)
+        try:
+            issue = get_issue(server, user, token, issue_key, fields=fields)
+        except urllib.error.HTTPError as exc:
+            # A missing/invisible key is a 404, not a crash: surface it
+            # through the empty-discovery path (which exits 5 loudly).
+            # Everything else (including auth failures on the issue read)
+            # propagates as before.
+            if exc.code != 404:
+                raise
+            return []
         return [issue] if issue else []
     jql = build_jql(config)
     return search_issues(server, user, token, jql, fields=fields)
@@ -766,6 +776,7 @@ def main(argv=None):
 
     config = load_config(args.config)
     server, user, token = require_env()
+    verify_credentials(server, user, token)
 
     mode = "single" if args.issue else "batch"
     print(f"Release Quality Gate 1 — mode={mode}, dry_run={args.dry_run}")
@@ -773,10 +784,42 @@ def main(argv=None):
     issues = discover_issues(config, server, user, token,
                              issue_key=args.issue)
     if not issues:
+        # Loud zero-discovery guards: a silent green no-op hid both the
+        # 2026-11 stale-calendar window and the 2026-11-15/16 revoked-
+        # credential window (search degrades to anonymous, returning
+        # HTTP 200 with zero rows). Artifacts are still written so the
+        # archive keeps its trail, then the run exits non-zero.
         print("No issues found to evaluate.")
         run_data = build_run_data({}, config, args.dry_run, mode, args.issue)
         write_artifacts(run_data)
-        return
+        if args.issue:
+            print(
+                f"ISSUE NOT FOUND: {args.issue} is not visible to these "
+                f"credentials (or does not exist).",
+                file=sys.stderr,
+            )
+            sys.exit(5)
+        versions = resolve_discovery_target_versions(config)
+        if versions:
+            print(
+                "ANOMALY: discovery returned 0 issues while the release "
+                f"calendar resolves {len(versions)} target version(s) "
+                "(e.g. "
+                f"{versions[0]}). Either the credentials lost visibility "
+                "(Jira serves anonymous search results as HTTP 200 with "
+                "zero rows) or Jira search is degraded — this should not "
+                "happen with a live calendar.",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+        print(
+            "CALENDAR EXPIRED: the release calendar resolved no target "
+            "versions, so discovery fail-closed to the never-match "
+            "sentinel and matched nothing. Update "
+            "config/release-calendar.json with the next cycle's events.",
+            file=sys.stderr,
+        )
+        sys.exit(4)
 
     print(f"Found {len(issues)} issue(s) to evaluate.")
     enrich_issues_with_child_epics(issues, config, server, user, token)
